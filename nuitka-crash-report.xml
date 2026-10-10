@@ -1,0 +1,57 @@
+<?xml version='1.0' encoding='utf8'?>
+<nuitka-compilation-report nuitka_version="4.1.3" nuitka_commercial_version="not installed" mode="onefile" completion="error exit message (1)" exit_message="pyside6: Plugin issue while working on 'plugin startup checks'. Please report the bug with the above traceback included.">
+  <performance>
+    <memory_usage name="after_launch" value="43638784" />
+  </performance>
+  <data_composer blob_size="None" />
+  <performance-totals>
+    <optimization-time pass="all" time="0.0000" module_count="0" />
+    <code-generation-time time="0.0000" module_count="0" />
+  </performance-totals>
+  <command_line>
+    <option value="--standalone" />
+    <option value="--onefile" />
+    <option value="--plugin-enable=pyside6" />
+    <option value="--windows-console-mode=disable" />
+    <option value="main.py" />
+  </command_line>
+  <plugins>
+    <plugin name="anti-bloat" user_enabled="no" />
+    <plugin name="data-files" user_enabled="no" />
+    <plugin name="delvewheel" user_enabled="no" />
+    <plugin name="dll-files" user_enabled="no" />
+    <plugin name="gevent" user_enabled="no" />
+    <plugin name="gi" user_enabled="no" />
+    <plugin name="glfw" user_enabled="no" />
+    <plugin name="implicit-imports" user_enabled="no" />
+    <plugin name="kivy" user_enabled="no" />
+    <plugin name="matplotlib" user_enabled="no" />
+    <plugin name="multiprocessing" user_enabled="no" />
+    <plugin name="options-nanny" user_enabled="no" />
+    <plugin name="pbr-compat" user_enabled="no" />
+    <plugin name="pkg-resources" user_enabled="no" />
+    <plugin name="playwright" user_enabled="no" />
+    <plugin name="pyside6" user_enabled="yes" />
+    <plugin name="pywebview" user_enabled="no" />
+    <plugin name="spacy" user_enabled="no" />
+    <plugin name="torch-jit" user_enabled="no" />
+    <plugin name="transformers" user_enabled="no" />
+  </plugins>
+  <onefile cache_mode="temporary" unpack_dir="{TEMP}\onefile_{PID}_{TIME_US}_{RANDOM}" />
+  <distributions />
+  <python python_exe="${sys.prefix}\python.exe" python_flavor="Anaconda Python" python_version="3.13.9" os_name="Windows" os_release="11" arch_name="x86_64" filesystem_encoding="utf-8" gil="yes">
+    <search_path>
+      <path value="${cwd}" />
+      <path value="${sys.prefix}\DLLs" />
+      <path value="${sys.prefix}\Lib" />
+      <path value="${sys.prefix}" />
+      <path value="~\AppData\Roaming\Python\Python313\site-packages" />
+      <path value="${sys.prefix}\Lib\site-packages" />
+      <path value="${sys.prefix}\Lib\site-packages\win32" />
+      <path value="${sys.prefix}\Lib\site-packages\win32\lib" />
+      <path value="${sys.prefix}\Lib\site-packages\Pythonwin" />
+      <path value="${sys.prefix}\Lib\site-packages\setuptools\_vendor" />
+    </search_path>
+  </python>
+  <output />
+</nuitka-compilation-report>
