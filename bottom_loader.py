@@ -195,21 +195,34 @@ def load_bottom(xtf_path):
 
 
 def save_bottom(xtf_path, pings):
-    """pings(또는 meta)의 현재 altitude 를 사이드카에 기록하고 경로 반환."""
+    """pings(또는 meta, ndarray, dict)의 현재 altitude 를 사이드카에 기록하고 경로 반환."""
     path = bottom_path(xtf_path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as fp:
         w = csv.writer(fp)
         w.writerow(["ping_no", "altitude_m"])
+        if isinstance(pings, dict):
+            for k in sorted(pings.keys(), key=lambda x: int(x)):
+                try:
+                    v = float(pings[k])
+                except (TypeError, ValueError):
+                    v = 0.0
+                w.writerow([int(k), "%.3f" % v])
+            return path
         for i, p in enumerate(pings):
-            a = p.get("altitude", 0.0)
+            if isinstance(p, dict):
+                a = p.get("altitude", p.get("alt", 0.0))
+                pno = _ping_no(p, i)
+            else:
+                a = p
+                pno = i
             try:
                 a = float(a)
             except (TypeError, ValueError):
                 a = 0.0
             if not np.isfinite(a):
                 a = 0.0
-            w.writerow([_ping_no(p, i), "%.3f" % a])
+            w.writerow([pno, "%.3f" % a])
     return path
 
 
@@ -385,6 +398,132 @@ def track_bottom_all(pings, min_alt=MIN_ALTITUDE, max_alt=MAX_ALTITUDE,
     if clean:
         return clean_bottom(out, min_alt=min_alt, max_alt=max_alt)
     return out.astype(np.float32)
+
+
+def track_bottom_seeded(img, meta, seeds, buffer_m=3.5, max_step_m=0.4, clean=True):
+    """사용자가 지정한 시드 핑(seed_row, seed_alt)을 기점으로 전/후 방향 해저면을 자동 추적.
+
+    img        : 2D uint8 소나 영상 (rows=pings, cols=samples)
+    meta       : 핑별 메타데이터 리스트 (n_port, n_stbd, slant_range 등 포함)
+    seeds      : (row, alt) 튜플 또는 [(r0, a0), (r1, a1), ...] 시드 리스트
+    buffer_m   : 이전 핑 대비 탐색 허용 버퍼 폭 (m, 기본 3.5m)
+    max_step_m : 핑당 최대 허용 고도 변화량 (m, 기본 0.4m)
+    clean      : 이상치 및 미세 지터 제거 필터링 여부
+
+    반환: (N,) float32 고도(m) 배열
+    """
+    n_pings = len(meta)
+    if n_pings == 0 or img is None or len(img) == 0:
+        return np.full(n_pings, float(DEFAULT_ALTITUDE), dtype=np.float32)
+
+    # 단일 튜플 지원
+    if isinstance(seeds, tuple) and len(seeds) == 2:
+        seeds = [seeds]
+    if not seeds:
+        return np.full(n_pings, float(DEFAULT_ALTITUDE), dtype=np.float32)
+
+    seeds = sorted([(int(s[0]), float(s[1])) for s in seeds], key=lambda x: x[0])
+
+    sr_p = np.array([float(m.get("range_port") or m.get("slant_range") or 80.0) for m in meta], dtype=np.float64)
+    sr_s = np.array([float(m.get("range_stbd") or m.get("slant_range") or 80.0) for m in meta], dtype=np.float64)
+    np_arr = np.array([int(m.get("n_port", 500)) for m in meta], dtype=int)
+    ns_arr = np.array([int(m.get("n_stbd", 500)) for m in meta], dtype=int)
+    w_img = img.shape[1] if img.ndim == 2 else 1000
+
+    def _detect_row(row_idx, curr_alt):
+        if row_idx < 0 or row_idx >= len(img):
+            return curr_alt
+        row_data = img[row_idx]
+        np_ = np_arr[row_idx]
+        ns_ = ns_arr[row_idx]
+        sp = sr_p[row_idx]
+        ss = sr_s[row_idx]
+
+        m_per_samp_p = sp / float(max(np_, 1))
+        m_per_samp_s = ss / float(max(ns_, 1))
+
+        # 1. Port 채널 탐색 (Nadir 기준 좌측 방향)
+        buf_samp_p = max(4, int(round(buffer_m / m_per_samp_p)))
+        t_samp_p = int(round(curr_alt / m_per_samp_p))
+        pc0 = max(0, np_ - t_samp_p - buf_samp_p)
+        pc1 = min(np_, np_ - t_samp_p + buf_samp_p)
+        alt_p = None
+        if pc1 - pc0 >= 5:
+            seg = row_data[pc0:pc1].astype(np.float32)
+            grad = -np.diff(seg)
+            if len(grad) > 0 and np.max(grad) > 1.5:
+                alt_p = (np_ - (pc0 + np.argmax(grad))) * m_per_samp_p
+
+        # 2. Starboard 채널 탐색 (Nadir 기준 우측 방향)
+        buf_samp_s = max(4, int(round(buffer_m / m_per_samp_s)))
+        t_samp_s = int(round(curr_alt / m_per_samp_s))
+        sc0 = max(np_, np_ + t_samp_s - buf_samp_s)
+        sc1 = min(w_img, np_ + t_samp_s + buf_samp_s)
+        alt_s = None
+        if sc1 - sc0 >= 5:
+            seg = row_data[sc0:sc1].astype(np.float32)
+            grad = np.diff(seg)
+            if len(grad) > 0 and np.max(grad) > 1.5:
+                alt_s = (sc0 + np.argmax(grad) - np_) * m_per_samp_s
+
+        # 3. 양현 융합 (Dual-channel Fusion)
+        cands = [a for a in (alt_p, alt_s) if a is not None and abs(a - curr_alt) <= buffer_m]
+        if cands:
+            cand_alt = float(np.mean(cands))
+            diff = np.clip(cand_alt - curr_alt, -max_step_m, max_step_m)
+            return curr_alt + 0.35 * diff
+        return curr_alt
+
+    def _track_range(r_start, r_end, init_alt):
+        step = 1 if r_end >= r_start else -1
+        out = {}
+        curr = init_alt
+        for r in range(r_start, r_end + step, step):
+            if 0 <= r < n_pings:
+                curr = _detect_row(r, curr)
+                out[r] = curr
+        return out
+
+    altitudes = np.full(n_pings, np.nan, dtype=np.float64)
+
+    # 1. 첫 번째 시드 이전 구간 역방향 추적
+    first_r, first_a = seeds[0]
+    before_map = _track_range(first_r, 0, first_a)
+    for r, a in before_map.items():
+        altitudes[r] = a
+
+    # 2. 시드와 시드 사이 구간 양방향 추적 및 가중 블렌딩
+    for k in range(len(seeds) - 1):
+        r0, a0 = seeds[k]
+        r1, a1 = seeds[k + 1]
+        if r1 <= r0:
+            continue
+        fwd_map = _track_range(r0, r1, a0)
+        bwd_map = _track_range(r1, r0, a1)
+        for r in range(r0, r1 + 1):
+            w = float(r - r0) / float(max(r1 - r0, 1))
+            altitudes[r] = (1.0 - w) * fwd_map[r] + w * bwd_map[r]
+
+    # 3. 마지막 시드 이후 구간 순방향 추적
+    last_r, last_a = seeds[-1]
+    after_map = _track_range(last_r, n_pings - 1, last_a)
+    for r, a in after_map.items():
+        altitudes[r] = a
+
+    # NaN 결측 선형 보간
+    nan_mask = ~np.isfinite(altitudes)
+    if nan_mask.any():
+        idx = np.arange(n_pings)
+        if (~nan_mask).any():
+            altitudes[nan_mask] = np.interp(idx[nan_mask], idx[~nan_mask], altitudes[~nan_mask])
+        else:
+            altitudes[:] = float(DEFAULT_ALTITUDE)
+
+    # 이상치 평활
+    if clean and n_pings >= 5:
+        altitudes = median_filter1d(altitudes, 5)
+
+    return np.clip(altitudes, MIN_ALTITUDE, MAX_ALTITUDE).astype(np.float32)
 
 
 # ==================================================== 통합 진입점

@@ -61,6 +61,7 @@ hiddenimports = []
 hiddenimports += collect_submodules("rasterio")
 hiddenimports += collect_submodules("pyxtf")
 hiddenimports += collect_submodules("pyproj")
+hiddenimports += collect_submodules("processing")
 hiddenimports += LOCAL
 hiddenimports += [
     "rasterio.sample",
@@ -104,6 +105,14 @@ for _m in LOCAL:
     if os.path.isfile(_src):
         datas.append((_src, "."))
 print("[spec] bundled sources : %d" % len(LOCAL))
+
+# processing 패키지 모듈 동봉
+_proc_dir = os.path.join(HERE, "processing")
+if os.path.isdir(_proc_dir):
+    for _fn in os.listdir(_proc_dir):
+        if _fn.lower().endswith(".py"):
+            datas.append((os.path.join(_proc_dir, _fn), "processing"))
+    print("[spec] bundled processing sources")
 
 # 런타임 훅
 runtime_hooks = []

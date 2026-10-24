@@ -36,6 +36,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QWidget, QSplitter,
     QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSlider, QMessageBox,
+    QDoubleSpinBox, QButtonGroup, QFrame,
 )
 
 from xtf_loader import load_xtf
@@ -43,6 +44,12 @@ from waterfall_view import WaterfallView
 from map_view import MapView
 from processing.contacts import save_contact
 from processing.bottom_io import sync_bottom, save_bottom
+from processing.nav_io import sync_nav, save_nav
+from processing.nav_interpolator import process_navigation, apply_interpolated_nav_to_meta
+from processing.nav_dialog import NavProcessDialog
+from processing.fishbone_dialog import NavHeadingTunerDialog
+from processing.motion_ripple_dialog import TowfishMotionRippleDialog
+from processing.agc import apply_agc
 from bounds_utils import bounds_from_raster
 
 
@@ -212,9 +219,44 @@ class MainWindow(QMainWindow):
 
         # ---- 메뉴: 처리 ----
         m_view = self.menuBar().addMenu("처리(&P)")
-        self.act_agc = QAction("AGC 적용", self, checkable=True)
+        self.act_agc = QAction("방사보정 AGC 적용 (Angle Varied Gain)", self, checkable=True)
+        self.act_agc.setStatusTip("해저면 First Bottom 기준 각도별 이득 보정(AVG/TVG)을 적용하여 직하방 과포화 억제 및 원거리 감쇄를 보상합니다.")
         self.act_agc.toggled.connect(self._on_agc_toggled)
         m_view.addAction(self.act_agc)
+
+        self.act_swap_ch = QAction("좌우 채널 반전 (Port ↔ Starboard Swap)", self, checkable=True)
+        self.act_swap_ch.setShortcut(QKeySequence("Ctrl+Shift+X"))
+        self.act_swap_ch.setStatusTip("소나 Port와 Starboard 채널 순서를 상호 반대로 교환")
+        self.act_swap_ch.toggled.connect(self._on_swap_channels_toggled)
+        m_view.addAction(self.act_swap_ch)
+
+        act_fishbone = QAction("생선 가시 항법/헤딩 튜너 (Fishbone Inspection)...", self)
+        act_fishbone.setShortcut(QKeySequence("Ctrl+H"))
+        act_fishbone.setStatusTip("생선 가시 형태 항적/헤딩 시각화 및 부드러운 변위 보간 실시간 튜닝")
+        act_fishbone.triggered.connect(self._on_open_fishbone_tuner)
+        m_view.addAction(act_fishbone)
+        self.act_fishbone = act_fishbone
+
+        act_nav = QAction("항법 일괄 보정 및 핑 보간 (Navigation Processing)...", self)
+        act_nav.setShortcut(QKeySequence("Ctrl+N"))
+        act_nav.setStatusTip("GPS 스파이크 제거, 기준 위치 스무딩 및 매 핑별 위치/헤딩 보간")
+        act_nav.triggered.connect(self._on_process_navigation)
+        m_view.addAction(act_nav)
+        self.act_nav = act_nav
+
+        m_view.addSeparator()
+        self.act_bt_edit = QAction("해저면 추적 및 바탐 편집 (Bottom Tracking / Edit)...", self, checkable=True)
+        self.act_bt_edit.setShortcut(QKeySequence("Ctrl+B"))
+        self.act_bt_edit.setStatusTip("시드 기반 First Bottom 자동 추적 및 구간 수동 보정")
+        self.act_bt_edit.toggled.connect(self._toggle_bt_edit)
+        m_view.addAction(self.act_bt_edit)
+
+        act_ripple = QAction("토우피쉬 모션 리플 보정 (Motion Ripple Correction)...", self)
+        act_ripple.setShortcut(QKeySequence("Ctrl+R"))
+        act_ripple.setStatusTip("파도에 의한 롤링/피칭 리플 해석 및 줄무늬 아티팩트 보정")
+        act_ripple.triggered.connect(self._on_open_motion_ripple)
+        m_view.addAction(act_ripple)
+        self.act_ripple = act_ripple
 
         # ---- 메뉴: 모자이크 ----
         m_mos = self.menuBar().addMenu("모자이크(&M)")
@@ -247,6 +289,9 @@ class MainWindow(QMainWindow):
         self.wf = WaterfallView()
         self.wf.pingHovered.connect(self._on_hover)
         self.wf.contactAdded.connect(self._on_contact)
+        self.wf.bottomProgress.connect(self._on_bottom_progress)
+        self.wf.roiSelected.connect(self._on_roi_selected)
+        self.ripple_dialog = None
 
         # 하단 네비게이션 바
         self.btn_prev = QPushButton("\u25c0")
@@ -260,16 +305,29 @@ class MainWindow(QMainWindow):
         self.lbl_file = QLabel("파일 없음")
         self.lbl_file.setAlignment(Qt.AlignCenter)
 
+        # 좌우 채널 반전 버튼
+        self.btn_swap_ch = QPushButton("좌우 반전 (P↔S)")
+        self.btn_swap_ch.setCheckable(True)
+        self.btn_swap_ch.setToolTip("소나 Port와 Starboard 채널 순서를 상호 교환합니다 (Ctrl+Shift+X)")
+        self.btn_swap_ch.toggled.connect(self._on_swap_channels_toggled)
+
         # 바탐 편집 버튼
         self.btn_bt_edit = QPushButton("바탐 편집 시작")
         self.btn_bt_edit.setCheckable(True)
         self.btn_bt_edit.toggled.connect(self._toggle_bt_edit)
 
+        # 모션 리플 보정 버튼
+        self.btn_ripple = QPushButton("모션 리플 보정 (Ctrl+R)")
+        self.btn_ripple.setToolTip("파도에 의한 롤링/피칭 리플 효과를 마우스 영역 지정 후 해석 및 보정합니다.")
+        self.btn_ripple.clicked.connect(self._on_open_motion_ripple)
+
         nav = QHBoxLayout()
         nav.setContentsMargins(4, 2, 4, 2)
         nav.addWidget(self.btn_prev)
         nav.addWidget(self.lbl_file, 1)
+        nav.addWidget(self.btn_swap_ch)
         nav.addWidget(self.btn_bt_edit)
+        nav.addWidget(self.btn_ripple)
         nav.addWidget(self.btn_next)
 
         # ---- 중앙 배치 ----
@@ -277,6 +335,12 @@ class MainWindow(QMainWindow):
         rlay = QVBoxLayout(right)
         rlay.setContentsMargins(0, 0, 0, 0)
         rlay.setSpacing(0)
+
+        # 바탐 편집 전용 컨트롤 패널
+        self.bt_panel = self._create_bottom_edit_panel()
+        self.bt_panel.setVisible(False)
+        rlay.addWidget(self.bt_panel)
+
         rlay.addWidget(self.wf, 1)
         nav_w = QWidget()
         nav_w.setLayout(nav)
@@ -343,9 +407,11 @@ class MainWindow(QMainWindow):
 
             color = COLORS[len(self.files) % len(COLORS)]
             sync_bottom(path, meta)
+            sync_nav(path, meta)
             self.files.append({
-                "path": path, "img": img, "meta": meta,
+                "path": path, "img": img, "raw_img": img.copy(), "meta": meta,
                 "color": color, "agc": self.agc_on,
+                "swap_channels": False,
                 "contacts": [],
             })
 
@@ -378,14 +444,29 @@ class MainWindow(QMainWindow):
         self.cur_idx = idx
         f = self.files[idx]
 
-        if f["agc"] != self.agc_on:
+        if f.get("agc") != self.agc_on:
+            if "raw_img" not in f:
+                f["raw_img"] = f["img"].copy()
             try:
-                img, meta = load_xtf(f["path"], agc=self.agc_on,
-                                     agc_window=AGC_WINDOW)
-                sync_bottom(f["path"], meta)
-                f["img"], f["meta"], f["agc"] = img, meta, self.agc_on
+                if self.agc_on:
+                    f["img"] = apply_agc(f["raw_img"], meta=f["meta"], window=AGC_WINDOW, strength=1.0)
+                    f["agc"] = True
+                else:
+                    f["img"] = f["raw_img"].copy()
+                    f["agc"] = False
             except Exception as e:
-                QMessageBox.warning(self, "재로드 실패", str(e))
+                QMessageBox.warning(self, "AGC 적용 실패", str(e))
+
+        # 좌우 채널 반전 버튼/메뉴 상태 동기화
+        swap_on = bool(f.get("swap_channels", False))
+        if hasattr(self, 'act_swap_ch'):
+            self.act_swap_ch.blockSignals(True)
+            self.act_swap_ch.setChecked(swap_on)
+            self.act_swap_ch.blockSignals(False)
+        if hasattr(self, 'btn_swap_ch'):
+            self.btn_swap_ch.blockSignals(True)
+            self.btn_swap_ch.setChecked(swap_on)
+            self.btn_swap_ch.blockSignals(False)
 
         self._apply_display()
         self.map.set_active_track(idx)
@@ -426,21 +507,256 @@ class MainWindow(QMainWindow):
         for row, col, label in f.get("contacts", []):
             self.wf.add_contact_marker(row, col, label)
 
+
+
+    # ================================================ 생선 가시 항법/헤딩 튜너
+    def _on_open_fishbone_tuner(self):
+        """생선 가시(Fishbone) 대화상자를 열어 항적 및 헤딩 보간을 시각적으로 확인하고 메모리에 즉시 적용."""
+        if not self.files:
+            QMessageBox.information(
+                self, "항법 및 헤딩 튜너",
+                "열려있는 XTF 파일이 없습니다.\n먼저 XTF 파일을 열어주세요.")
+            return
+
+        dlg = NavHeadingTunerDialog(self, files=self.files, cur_idx=self.cur_idx)
+        if dlg.exec() == 1:
+            # 메모리(f["meta"])가 대화상자에서 이미 갱신되었으므로 지도 및 화면 즉시 갱신
+            f = self.files[self.cur_idx]
+            track = self._track_points(f["meta"])
+            self.map.add_track(self.cur_idx, track, f["color"])
+            poly = self._swath_polygon(f["meta"])
+            if poly:
+                self.map.add_coverage(self.cur_idx, poly, f["color"])
+            self.map.set_active_track(self.cur_idx)
+            self._apply_display()
+
+            self.statusBar().showMessage(
+                f"항법 및 헤딩 보정 완료: {os.path.basename(f['path'])} 메모리 및 지도 갱신됨", 6000
+            )
+
+    # ================================================ 항법 보정 및 핑 보간
+    def _on_process_navigation(self):
+        """선택한 XTF 파일(들)의 항법 스파이크 제거, 스무딩 및 핑별 위치/헤딩 보간 수행."""
+        if not self.files:
+            QMessageBox.information(
+                self, "항법 보정",
+                "열려있는 XTF 파일이 없습니다.\n먼저 XTF 파일을 열어주세요.")
+            return
+
+        dlg = NavProcessDialog(self, files=self.files, cur_idx=self.cur_idx)
+        if dlg.exec() != 1:
+            return
+
+        p = dlg.get_params()
+        targets = self.files if p.get("apply_all") else [self.files[self.cur_idx]]
+
+        total_spikes = 0
+        processed_files = []
+
+        self.statusBar().showMessage("항법 보정 및 매 핑별 위치 보간 중... 잠시 기다려 주세요.")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for f in targets:
+                path = f["path"]
+                meta = f["meta"]
+                results, stats = process_navigation(
+                    meta,
+                    spike_filter=p.get("spike_filter", True),
+                    max_speed_mps=p.get("max_speed_mps", 12.0),
+                    smooth_window_sec=p.get("smooth_window_sec", 3.0),
+                    interp_method=p.get("interp_method", "hermite"),
+                    use_cog_heading=p.get("use_cog_heading", False),
+                )
+                apply_interpolated_nav_to_meta(meta, results)
+
+                if p.get("save_sidecar", True):
+                    save_nav(path, meta)
+
+                total_spikes += stats.get("spikes_detected", 0)
+                processed_files.append((f, stats))
+
+            # 지도 및 화면 갱신
+            for idx, f in enumerate(self.files):
+                if f in targets:
+                    track = self._track_points(f["meta"])
+                    self.map.add_track(idx, track, f["color"])
+                    poly = self._swath_polygon(f["meta"])
+                    if poly:
+                        self.map.add_coverage(idx, poly, f["color"])
+
+            if 0 <= self.cur_idx < len(self.files):
+                self.map.set_active_track(self.cur_idx)
+                self._apply_display()
+
+        except Exception as e:
+            traceback.print_exc()
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "항법 보정 실패", f"오류 발생: {e}")
+            self.statusBar().showMessage("항법 보정 실패", 5000)
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        # 결과 요약 안내 메시지
+        cur_stats = processed_files[0][1] if processed_files else {}
+        summary_msg = (
+            f"항법 보정 및 핑 보간이 성공적으로 완료되었습니다.\n\n"
+            f"• 대상 파일: {len(processed_files)}개\n"
+            f"• 핑 업데이트 레이트(추정): {cur_stats.get('avg_ping_rate', 0.0):.1f} Hz\n"
+            f"• GPS 갱신 빈도: {cur_stats.get('gps_update_rate', 0.0):.2f} Hz "
+            f"(1회당 약 {cur_stats.get('pings_per_update', 0.0):.1f}핑 보간)\n"
+            f"• 검출된 위치 스파이크/결측: {total_spikes}건 복원\n"
+            f"• 평균 선속: {cur_stats.get('avg_speed_mps', 0.0):.2f} m/s "
+            f"({cur_stats.get('avg_speed_knots', 0.0):.1f} kts)\n\n"
+            f"메모리의 항법 정보가 갱신되어 지도 항적 및 커버리지가 업데이트되었습니다."
+        )
+        if p.get("save_sidecar", True):
+            summary_msg += "\n(사이드카 nav/*.nav.csv 파일 저장 완료 - 모자이크 생성 시 자동 반영)"
+
+        self.statusBar().showMessage(
+            f"항법 보정 완료: {cur_stats.get('avg_ping_rate', 0.0):.1f} Hz 매 핑 보간, 스파이크 {total_spikes}건 복원",
+            7000,
+        )
+        QMessageBox.information(self, "항법 보정 완료", summary_msg)
+
+
+    # ================================================ 토우피쉬 모션 리플 보정
+    def _on_open_motion_ripple(self):
+        """토우피쉬 롤링/피칭 리플 해석 및 보정 대화상자를 열고 ROI 선택 모드 활성화."""
+        if not self.files or self.cur_idx < 0:
+            QMessageBox.information(
+                self, "모션 리플 보정",
+                "열려있는 XTF 파일이 없습니다.\n먼저 XTF 파일을 열어주세요."
+            )
+            return
+
+        f = self.files[self.cur_idx]
+        self.wf.set_roi_mode(True)
+
+        if self.ripple_dialog is None:
+            self.ripple_dialog = TowfishMotionRippleDialog(
+                self, img=f["img"], meta=f["meta"], filename=f["path"]
+            )
+            self.ripple_dialog.correctionApplied.connect(self._on_ripple_correction_applied)
+            self.ripple_dialog.livePreviewRequested.connect(self._on_ripple_live_preview)
+            self.ripple_dialog.finished.connect(self._on_ripple_dialog_closed)
+        else:
+            self.ripple_dialog.img = f["img"]
+            self.ripple_dialog.meta = f["meta"]
+            self.ripple_dialog.filename = f["path"]
+            self.ripple_dialog.run_analysis()
+
+        self.ripple_dialog.show()
+        self.ripple_dialog.raise_()
+        self.ripple_dialog.activateWindow()
+        self.statusBar().showMessage(
+            "💡 Waterfall 화면에서 파도 리플 패턴이 나타난 구간을 마우스 좌클릭으로 드래그하여 지정하세요.", 8000
+        )
+
+    def _on_roi_selected(self, r0: int, r1: int, c0: int, c1: int):
+        """Waterfall에서 사용자가 마우스로 드래그한 ROI 영역 수신."""
+        if not self.files or self.cur_idx < 0:
+            return
+        f = self.files[self.cur_idx]
+        if self.ripple_dialog is None or not self.ripple_dialog.isVisible():
+            self._on_open_motion_ripple()
+        if self.ripple_dialog is not None:
+            self.ripple_dialog.set_roi(r0, r1, c0, c1)
+            self.ripple_dialog.raise_()
+
+    def _on_ripple_live_preview(self, preview_img: np.ndarray, apply_full: bool):
+        """리플 대화상자에서 슬라이더/파라미터 조절 시 메인 Waterfall 화면 실시간 동기화."""
+        if not self.files or self.cur_idx < 0:
+            return
+        f = self.files[self.cur_idx]
+        img = preview_img
+        if self.brightness != 0 or self.contrast != 1.0:
+            adj = img.astype(np.float32) * self.contrast + self.brightness
+            img = np.clip(adj, 0, 255).astype(np.uint8)
+        self.wf.set_image(img, f["meta"])
+
+    def _on_ripple_correction_applied(self, new_img: np.ndarray, apply_full: bool):
+        """대화상자에서 보정 확정 시 메모리 및 화면 갱신."""
+        if not self.files or self.cur_idx < 0:
+            return
+        f = self.files[self.cur_idx]
+        f["img"] = new_img
+        f["raw_img"] = new_img.copy()
+        self._apply_display()
+        scope_str = "전체 핑 일괄 적용" if apply_full else "선택된 ROI 구간 적용"
+        self.statusBar().showMessage(f"토우피쉬 모션 리플 보정 적용 완료 ({scope_str})", 6000)
+        self.wf.clear_roi()
+        self.wf.set_roi_mode(False)
+
+    def _on_ripple_dialog_closed(self, result: int):
+        """리플 대화상자가 닫힐 때(적용하지 않고 닫은 경우 포함) 원본 복원 및 정리."""
+        self._apply_display()
+        self.wf.clear_roi()
+        self.wf.set_roi_mode(False)
+
+
+    # ================================================ 좌우 채널 반전 (Port ↔ Starboard)
+    def _on_swap_channels_toggled(self, checked):
+        """현재 파일의 Port와 Starboard 채널 순서를 상호 반대로 교환하여 재로드 및 화면 갱신."""
+        if self.cur_idx < 0 or not self.files:
+            return
+        f = self.files[self.cur_idx]
+        if f.get("swap_channels") == checked:
+            return
+        f["swap_channels"] = checked
+
+        # UI 위젯 동기화
+        if hasattr(self, 'act_swap_ch') and self.act_swap_ch.isChecked() != checked:
+            self.act_swap_ch.blockSignals(True)
+            self.act_swap_ch.setChecked(checked)
+            self.act_swap_ch.blockSignals(False)
+        if hasattr(self, 'btn_swap_ch') and self.btn_swap_ch.isChecked() != checked:
+            self.btn_swap_ch.blockSignals(True)
+            self.btn_swap_ch.setChecked(checked)
+            self.btn_swap_ch.blockSignals(False)
+
+        try:
+            img, meta = load_xtf(f["path"], flip_port=False, swap_channels=checked,
+                                 agc=self.agc_on, agc_window=AGC_WINDOW)
+            sync_bottom(f["path"], meta)
+            sync_nav(f["path"], meta)
+            f["img"], f["meta"] = img, meta
+        except Exception as e:
+            QMessageBox.warning(self, "채널 반전 로드 실패", str(e))
+            return
+
+        self._apply_display()
+
+        # 지도 커버리지 폴리곤 즉시 갱신
+        poly = self._swath_polygon(f["meta"])
+        if poly:
+            self.map.add_coverage(self.cur_idx, poly, f["color"])
+
+        status_text = "좌우 채널 반전 적용됨 (Port ↔ Starboard 교환)" if checked else "좌우 채널 기본(정상) 적용됨"
+        self.statusBar().showMessage(status_text, 5000)
+
     # ================================================ AGC
     def _on_agc_toggled(self, checked):
         self.agc_on = checked
-        if self.cur_idx < 0:
+        if not self.files or self.cur_idx < 0:
             return
         f = self.files[self.cur_idx]
+        if "raw_img" not in f:
+            f["raw_img"] = f["img"].copy()
         try:
-            img, meta = load_xtf(f["path"], agc=self.agc_on,
-                                 agc_window=AGC_WINDOW)
-            sync_bottom(f["path"], meta)
-            f["img"], f["meta"], f["agc"] = img, meta, self.agc_on
+            if self.agc_on:
+                f["img"] = apply_agc(f["raw_img"], meta=f["meta"], window=AGC_WINDOW, strength=1.0)
+                f["agc"] = True
+            else:
+                f["img"] = f["raw_img"].copy()
+                f["agc"] = False
         except Exception as e:
-            QMessageBox.warning(self, "AGC 재로드 실패", str(e))
+            QMessageBox.warning(self, "AGC 적용 실패", str(e))
             return
         self._apply_display()
+        self.statusBar().showMessage(
+            f"방사보정 AGC(Angle Varied Gain) {'적용' if self.agc_on else '해제'}: {os.path.basename(f['path'])}", 4000
+        )
 
     # ================================================ hover → 지도 마커
     def _on_hover(self, ping_idx, sample_idx):
@@ -498,55 +814,252 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _swath_polygon(meta, step=SWATH_STEP):
-        """slant_range/heading 기반 좌우 외곽선 폴리곤 [(lat, lon), ...]"""
+        """slant_range/heading 기반 좌우 외곽선 폴리곤 [(lat, lon), ...]
+        Port와 Starboard의 range를 각각 반영하여 채널 반전 및 비대칭 폭을 정확히 투영."""
         left, right = [], []
         for m in meta[::step]:
             la, lo = m["y"], m["x"]
             if la == 0.0 and lo == 0.0:
                 continue
-            rng = m.get("slant_range", 0.0) or 0.0
-            if rng <= 0.0:
+            rng_p = float(m.get("range_port") or m.get("slant_range") or 0.0)
+            rng_s = float(m.get("range_stbd") or m.get("slant_range") or 0.0)
+            if rng_p <= 0.0 and rng_s <= 0.0:
                 continue
+            rng_p = rng_p if rng_p > 0.0 else rng_s
+            rng_s = rng_s if rng_s > 0.0 else rng_p
+
             hdg = math.radians(m.get("heading", 0.0) or 0.0)
             m_per_deg_lat = 111320.0
             m_per_deg_lon = 111320.0 * max(math.cos(math.radians(la)), 1e-6)
-            de = math.cos(hdg) * rng
-            dn = -math.sin(hdg) * rng
-            right.append((la + dn / m_per_deg_lat,
-                          lo + de / m_per_deg_lon))
-            left.append((la - dn / m_per_deg_lat,
-                         lo - de / m_per_deg_lon))
+
+            # 우현 (Starboard, +90도): cos(hdg), -sin(hdg)
+            de_s = math.cos(hdg) * rng_s
+            dn_s = -math.sin(hdg) * rng_s
+            right.append((la + dn_s / m_per_deg_lat,
+                          lo + de_s / m_per_deg_lon))
+
+            # 좌현 (Port, -90도): -cos(hdg), sin(hdg)
+            de_p = math.cos(hdg) * rng_p
+            dn_p = -math.sin(hdg) * rng_p
+            left.append((la - dn_p / m_per_deg_lat,
+                         lo - de_p / m_per_deg_lon))
         if len(left) < 2:
             return []
         return left + right[::-1]
 
-    # ================================================ 바탐 편집
+    # ================================================ 바탐 편집 패널 및 로직
+    def _create_bottom_edit_panel(self):
+        panel = QFrame()
+        panel.setObjectName("BottomEditPanel")
+        panel.setStyleSheet("""
+            QFrame#BottomEditPanel {
+                background-color: #1e1f22;
+                border-bottom: 2px solid #3c4043;
+                padding: 4px;
+            }
+            QLabel {
+                color: #e8eaed;
+                font-size: 11px;
+            }
+            QPushButton {
+                background-color: #2b2d30;
+                color: #e8eaed;
+                border: 1px solid #4e5157;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #35383d;
+            }
+            QPushButton:checked {
+                background-color: #1a73e8;
+                color: #ffffff;
+                border-color: #1a73e8;
+                font-weight: bold;
+            }
+            QDoubleSpinBox {
+                background-color: #2b2d30;
+                color: #e8eaed;
+                border: 1px solid #4e5157;
+                border-radius: 4px;
+                padding: 2px 4px;
+                font-size: 11px;
+            }
+        """)
+
+        vbox = QVBoxLayout(panel)
+        vbox.setContentsMargins(6, 4, 6, 4)
+        vbox.setSpacing(4)
+
+        # 1행: 제어 컨트롤 버튼들
+        row1 = QHBoxLayout()
+        row1.setContentsMargins(0, 0, 0, 0)
+        row1.setSpacing(6)
+
+        lbl_title = QLabel("<b>[ 해저면 추적 / 바탐 편집 ]</b>")
+        row1.addWidget(lbl_title)
+
+        # 모드 선택 그룹
+        self.btn_bt_auto = QPushButton("🎯 시드 자동 추적")
+        self.btn_bt_auto.setCheckable(True)
+        self.btn_bt_auto.setChecked(True)
+        self.btn_bt_auto.setToolTip("클릭한 지점을 기점으로 전 핑의 First Bottom을 자동 추적합니다.")
+
+        self.btn_bt_manual = QPushButton("✏️ 구간 수동 보정")
+        self.btn_bt_manual.setCheckable(True)
+        self.btn_bt_manual.setToolTip("불량 구간의 시작과 끝점을 클릭하여 선형 보정합니다.")
+
+        self.bt_mode_group = QButtonGroup(self)
+        self.bt_mode_group.addButton(self.btn_bt_auto, 0)
+        self.bt_mode_group.addButton(self.btn_bt_manual, 1)
+        self.btn_bt_auto.clicked.connect(lambda: self.wf.set_edit_mode("auto"))
+        self.btn_bt_manual.clicked.connect(lambda: self.wf.set_edit_mode("manual"))
+
+        row1.addWidget(self.btn_bt_auto)
+        row1.addWidget(self.btn_bt_manual)
+
+        # 버퍼 스핀박스
+        lbl_buf = QLabel("버퍼:")
+        self.sp_bt_buffer = QDoubleSpinBox()
+        self.sp_bt_buffer.setRange(0.5, 30.0)
+        self.sp_bt_buffer.setSingleStep(0.5)
+        self.sp_bt_buffer.setValue(3.5)
+        self.sp_bt_buffer.setSuffix(" m")
+        self.sp_bt_buffer.setToolTip("이전 핑 고도 대비 탐색 허용 범위 (±m)")
+        self.sp_bt_buffer.valueChanged.connect(self.wf.set_buffer_m)
+
+        row1.addWidget(lbl_buf)
+        row1.addWidget(self.sp_bt_buffer)
+
+        # 평활화 및 초기화
+        btn_smooth = QPushButton("🌊 부드럽게 (Smooth)")
+        btn_smooth.setToolTip("중앙값 필터를 적용하여 미세 지터와 노이즈를 완화합니다.")
+        btn_smooth.clicked.connect(lambda: self.wf.smooth_current_bottom(5))
+        row1.addWidget(btn_smooth)
+
+        btn_reset = QPushButton("↺ 초기화")
+        btn_reset.setToolTip("현재 편집/추적 내역을 초기화합니다.")
+        btn_reset.clicked.connect(self.wf.reset_bottom)
+        row1.addWidget(btn_reset)
+
+        row1.addStretch(1)
+
+        # 완료 및 취소
+        btn_save = QPushButton("💾 완료 및 저장 (Enter)")
+        btn_save.setStyleSheet("""
+            QPushButton {
+                background-color: #2e7d32;
+                color: #ffffff;
+                font-weight: bold;
+                border: 1px solid #1b5e20;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background-color: #388e3c;
+            }
+        """)
+        btn_save.setToolTip("추적된 바탐 고도를 사이드카(.bottom.csv)에 저장하고 모자이크에 반영합니다.")
+        btn_save.clicked.connect(self.wf.finish_bottom_edit)
+
+        btn_cancel = QPushButton("✕ 취소 (Esc)")
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #424242;
+                color: #ffffff;
+                border: 1px solid #616161;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #616161;
+            }
+        """)
+        btn_cancel.clicked.connect(self.wf.cancel_bottom_edit)
+
+        row1.addWidget(btn_save)
+        row1.addWidget(btn_cancel)
+        vbox.addLayout(row1)
+
+        # 2행: 도움말 및 진행 상태
+        self.lbl_bt_hint = QLabel("💡 영상에서 해저면 경계(First Bottom) 지점을 마우스 좌클릭하세요. 전 핑이 자동 추적됩니다.")
+        self.lbl_bt_hint.setStyleSheet("color: #ffe082; font-size: 11px; padding-left: 2px;")
+        vbox.addWidget(self.lbl_bt_hint)
+
+        return panel
+
+    def _on_bottom_progress(self, msg: str):
+        if hasattr(self, "lbl_bt_hint"):
+            self.lbl_bt_hint.setText(f"💡 {msg}")
+        self.statusBar().showMessage(msg, 5000)
+
     def _toggle_bt_edit(self, on):
         if on:
-            if not self.wf.start_bottom_edit():
+            if not self.files or self.cur_idx < 0:
+                QMessageBox.information(self, "안내", "먼저 XTF 파일을 열어주세요.")
+                self.btn_bt_edit.blockSignals(True)
                 self.btn_bt_edit.setChecked(False)
+                self.btn_bt_edit.blockSignals(False)
+                if hasattr(self, "act_bt_edit"):
+                    self.act_bt_edit.blockSignals(True)
+                    self.act_bt_edit.setChecked(False)
+                    self.act_bt_edit.blockSignals(False)
                 return
+
+            if not self.wf.start_bottom_edit():
+                self.btn_bt_edit.blockSignals(True)
+                self.btn_bt_edit.setChecked(False)
+                self.btn_bt_edit.blockSignals(False)
+                if hasattr(self, "act_bt_edit"):
+                    self.act_bt_edit.blockSignals(True)
+                    self.act_bt_edit.setChecked(False)
+                    self.act_bt_edit.blockSignals(False)
+                return
+
             self.btn_bt_edit.setText("바탐 편집 완료 (Enter)")
-            self.statusBar().showMessage(
-                "좌클릭=제어점 추가 · 우클릭=제어점 삭제 · Enter=완료 · Esc=취소")
+            if hasattr(self, "act_bt_edit"):
+                self.act_bt_edit.blockSignals(True)
+                self.act_bt_edit.setChecked(True)
+                self.act_bt_edit.blockSignals(False)
+            self.bt_panel.setVisible(True)
+            self.btn_bt_auto.setChecked(True)
         else:
             self.wf.finish_bottom_edit()
             self.btn_bt_edit.setText("바탐 편집 시작")
+            if hasattr(self, "act_bt_edit"):
+                self.act_bt_edit.blockSignals(True)
+                self.act_bt_edit.setChecked(False)
+                self.act_bt_edit.blockSignals(False)
+            self.bt_panel.setVisible(False)
 
     def _on_bottom_edited(self, new_alt):
-        if self.btn_bt_edit.isChecked():
-            self.btn_bt_edit.blockSignals(True)
-            self.btn_bt_edit.setChecked(False)
-            self.btn_bt_edit.setText("바탐 편집 시작")
-            self.btn_bt_edit.blockSignals(False)
+        self.bt_panel.setVisible(False)
+        self.btn_bt_edit.blockSignals(True)
+        self.btn_bt_edit.setChecked(False)
+        self.btn_bt_edit.setText("바탐 편집 시작")
+        self.btn_bt_edit.blockSignals(False)
+        if hasattr(self, "act_bt_edit"):
+            self.act_bt_edit.blockSignals(True)
+            self.act_bt_edit.setChecked(False)
+            self.act_bt_edit.blockSignals(False)
+
         if new_alt is None:
-            self.statusBar().showMessage("바탐 편집 취소됨", 3000)
+            self.statusBar().showMessage("바탐 편집이 취소되었습니다.", 3000)
             return
+
+        if not self.files or self.cur_idx < 0:
+            return
+
         f = self.files[self.cur_idx]
         for row, m in enumerate(f["meta"]):
-            m["altitude"] = float(new_alt[row])
+            if row < len(new_alt):
+                m["altitude"] = float(new_alt[row])
         path = save_bottom(f["path"], f["meta"])
-        self.statusBar().showMessage(f"바탐 저장: {path}", 4000)
+        if f.get("agc"):
+            if "raw_img" not in f:
+                f["raw_img"] = f["img"].copy()
+            f["img"] = apply_agc(f["raw_img"], meta=f["meta"], window=AGC_WINDOW, strength=1.0)
+            self._apply_display()
+        self.statusBar().showMessage(f"해저면(바탐) 고도 사이드카 저장 완료: {path}", 5000)
 
     # ================================================ 모자이크 파라미터
     def _xtf_paths(self):
@@ -563,11 +1076,16 @@ class MainWindow(QMainWindow):
         name = "mosaic"
         if paths:
             name = os.path.splitext(os.path.basename(paths[0]))[0]
+        cur_swap = False
+        if self.files and 0 <= self.cur_idx < len(self.files):
+            cur_swap = bool(self.files[self.cur_idx].get("swap_channels", False))
         return {
             "epsg": 32652, "res": 0.2,
             "outdir": os.path.join(os.getcwd(), "exported_mosaics"),
             "name": name, "lo": 2.0, "hi": 98.0,
             "use_port": True, "use_stbd": True,
+            "swap_channels": cur_swap,
+            "stride": 1, "ping_stride": 1,
             "flip_port": True, "slant_correct": True,
             "remove_water_column": True, "avc": True,
             "use_sidecar": True, "auto_track": True,
@@ -1114,9 +1632,18 @@ class MainWindow(QMainWindow):
 
 # ==================================================== 엔트리 포인트
 def main():
+    from PySide6.QtCore import QLoggingCategory
     from PySide6.QtGui import QFont
+
+    # Windows DirectWrite 비트맵 폰트(MS Sans Serif) 폴백 관련 불필요한 시스템 경고 억제
+    QLoggingCategory.setFilterRules("qt.qpa.fonts.warning=false")
+
     app = QApplication(sys.argv)
-    app.setFont(QFont("Malgun Gothic", 9))
+    app_font = QFont("Malgun Gothic", 9)
+    app_font.setStyleHint(QFont.SansSerif)
+    app_font.setFamilies(["Malgun Gothic", "Segoe UI", "Arial", "sans-serif"])
+    app.setFont(app_font)
+
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

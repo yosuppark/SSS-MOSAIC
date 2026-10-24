@@ -37,6 +37,16 @@ def _srange(headers, ch):
         return 0.0
 
 
+def _fmt_time(ping):
+    """핑 헤더의 날짜/시각 필드 → 'YYYY-MM-DD HH:MM:SS.mmm' 문자열."""
+    try:
+        return (f"{ping.Year:04d}-{ping.Month:02d}-{ping.Day:02d} "
+                f"{ping.Hour:02d}:{ping.Minute:02d}:{ping.Second:02d}"
+                f".{getattr(ping, 'HSeconds', 0):02d}0")
+    except (AttributeError, TypeError):
+        return ""
+
+
 def _pad(rows):
     """길이가 다른 1D 배열 리스트를 0-padding 2D 배열로."""
     w = max((r.size for r in rows), default=0)
@@ -47,17 +57,20 @@ def _pad(rows):
     return out
 
 
-def read_xtf(path, flip_port=True):
-    """옛 로더 로직 그대로 원시 float 진폭과 메타를 읽는다."""
+def read_xtf(path, flip_port=True, swap_channels=False):
+    """옛 로더 로직 그대로 원시 float 진폭과 메타를 읽는다. swap_channels=True 시 Port와 Starboard 채널을 상호 교환."""
     _fh, packets = pyxtf.xtf_read(path)
     pings = packets.get(pyxtf.XTFHeaderType.sonar, [])
     if not pings:
         raise ValueError("소나 핑 패킷(XTF_HEADER_SONAR)이 없습니다.")
 
+    ch_port = 1 if swap_channels else 0
+    ch_stbd = 0 if swap_channels else 1
+
     pl, sl, meta = [], [], []
     for idx, ping in enumerate(pings):
-        p = _chan(ping, 0)
-        s = _chan(ping, 1)
+        p = _chan(ping, ch_port)
+        s = _chan(ping, ch_stbd)
         if p is None and s is None:
             continue
         if p is None:
@@ -71,12 +84,13 @@ def read_xtf(path, flip_port=True):
         h = ping.ping_chan_headers
         meta.append({
             "no": int(getattr(ping, "PingNumber", idx)),
+            "time": _fmt_time(ping),
             "x": float(getattr(ping, "SensorXcoordinate", 0.0)),
             "y": float(getattr(ping, "SensorYcoordinate", 0.0)),
             "hd": float(getattr(ping, "SensorHeading", 0.0)),
             "alt": float(getattr(ping, "SensorPrimaryAltitude", 0.0)),
-            "rp": _srange(h, 0),
-            "rs": _srange(h, 1),
+            "rp": _srange(h, ch_port),
+            "rs": _srange(h, ch_stbd),
         })
 
     if not meta:
@@ -102,19 +116,50 @@ def avg_correct(A):
 
 
 def headings(meta, force_cog=False):
-    """SensorHeading이 무의미하면 항적 COG로 대체 (단위: 도)."""
-    hd = np.array([m["hd"] for m in meta], dtype=np.float64)
-    x = np.array([m["x"] for m in meta], dtype=np.float64)
-    y = np.array([m["y"] for m in meta], dtype=np.float64)
-    bad = force_cog or (not np.isfinite(hd).any()) or float(np.nanstd(hd)) < 1.0
-    if not bad:
-        print("  heading: 센서값 사용 (%.1f ~ %.1f deg)"
-              % (np.nanmin(hd), np.nanmax(hd)))
+    """보정된 hd가 존재하면 이를 우선 사용하고,
+    COG를 계산해야 하는 경우에도 단위벡터 가우시안 스무딩을 적용하여 유려한 각도 반환."""
+    hd = np.array([m.get("hd", 0.0) for m in meta], dtype=np.float64)
+    x = np.array([m.get("x", 0.0) for m in meta], dtype=np.float64)
+    y = np.array([m.get("y", 0.0) for m in meta], dtype=np.float64)
+
+    valid_hd = np.isfinite(hd) & (hd >= 0.0) & (hd <= 360.0)
+    has_valid_hd = (np.sum(valid_hd) >= 0.5 * len(meta)) and (float(np.nanstd(hd[valid_hd])) > 0.5)
+
+    if has_valid_hd and not force_cog:
+        print("  heading: 메타데이터 헤딩 사용 (%.1f ~ %.1f deg)"
+              % (np.nanmin(hd[valid_hd]), np.nanmax(hd[valid_hd])))
         return hd
-    dx = np.gradient(x)
-    dy = np.gradient(y)
-    cog = np.degrees(np.arctan2(dx, dy)) % 360.0
-    print("  heading: 항적 COG 사용 (%.1f ~ %.1f deg)"
+
+    n = len(x)
+    ref_y = float(np.nanmedian(y)) if n > 0 else 35.0
+    m_lat = 111132.0
+    m_lon = 111132.0 * math.cos(math.radians(ref_y))
+    east = (x - float(np.nanmedian(x))) * m_lon
+    north = (y - ref_y) * m_lat
+
+    win = max(7, min(61, n if n % 2 == 1 else n - 1))
+    radius = win // 2
+    kx = np.arange(-radius, radius + 1)
+    kernel = np.exp(-0.5 * (kx / max(win / 4.0, 1.0)) ** 2)
+    kernel /= kernel.sum()
+
+    sm_e = np.convolve(np.pad(east, radius, mode="edge"), kernel, mode="same")[radius : radius + n]
+    sm_n = np.convolve(np.pad(north, radius, mode="edge"), kernel, mode="same")[radius : radius + n]
+
+    step = max(1, min(10, n // 100))
+    pad_e = np.pad(sm_e, step, mode="edge")
+    pad_n = np.pad(sm_n, step, mode="edge")
+    de = pad_e[2 * step:] - pad_e[:-2 * step]
+    dn = pad_n[2 * step:] - pad_n[:-2 * step]
+    mag = np.maximum(np.hypot(de, dn), 1e-6)
+    ux = de / mag
+    uy = dn / mag
+
+    sm_ux = np.convolve(np.pad(ux, radius, mode="edge"), kernel, mode="same")[radius : radius + n]
+    sm_uy = np.convolve(np.pad(uy, radius, mode="edge"), kernel, mode="same")[radius : radius + n]
+    cog = np.degrees(np.arctan2(sm_ux, sm_uy)) % 360.0
+
+    print("  heading: 부드러운 스무딩 항적 COG 사용 (%.1f ~ %.1f deg)"
           % (cog.min(), cog.max()))
     return cog
 
@@ -129,13 +174,18 @@ def project(x, y, epsg):
     return np.asarray(ex, dtype=np.float64), np.asarray(ny, dtype=np.float64)
 
 def build(cfg):
-    res = float(cfg["res"])
-    step = max(1, int(cfg["stride"]))
+    full_cfg = dict(DEF)
+    if isinstance(cfg, dict):
+        full_cfg.update(cfg)
+    cfg = full_cfg
+
+    res = float(cfg.get("res", 0.2))
+    step = max(1, int(cfg.get("stride", cfg.get("ping_stride", 1))))
     xs, ys, vs = [], [], []
 
     for fp in cfg["files"]:
         print("[읽는 중]", os.path.basename(fp))
-        P, S, meta = read_xtf(fp, bool(cfg["flip_port"]))
+        P, S, meta = read_xtf(fp, bool(cfg["flip_port"]), bool(cfg.get("swap_channels", False)))
         n = len(meta)
         print("  pings=%d port=%s stbd=%s" % (n, P.shape, S.shape))
 

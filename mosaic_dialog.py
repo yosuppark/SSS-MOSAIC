@@ -253,6 +253,8 @@ class MosaicDialog(QDialog):
         w_ch.setLayout(hc)
         f.addRow("채널", w_ch)
 
+        self.cb_swap_ch = QCheckBox("좌우 채널 교환 (Port ↔ Starboard Swap)")
+        self.cb_swap_ch.setChecked(False)
         self.cb_flip = QCheckBox("Port 좌우 반전 (data[0][::-1])")
         self.cb_flip.setChecked(True)
         self.cb_slant = QCheckBox("Slant range 보정")
@@ -261,7 +263,7 @@ class MosaicDialog(QDialog):
         self.cb_wc.setChecked(True)
         self.cb_avc = QCheckBox("AVC / AVG 보정")
         self.cb_avc.setChecked(True)
-        for cb in (self.cb_flip, self.cb_slant, self.cb_wc, self.cb_avc):
+        for cb in (self.cb_swap_ch, self.cb_flip, self.cb_slant, self.cb_wc, self.cb_avc):
             f.addRow("", cb)
 
         self.sp_avc_win = QSpinBox()
@@ -432,6 +434,7 @@ class MosaicDialog(QDialog):
             "name": self.ed_name.text().strip() or "mosaic",
             "use_port": self.cb_port.isChecked(),
             "use_stbd": self.cb_stbd.isChecked(),
+            "swap_channels": self.cb_swap_ch.isChecked(),
             "flip_port": self.cb_flip.isChecked(),
             "slant_correct": self.cb_slant.isChecked(),
             "remove_water_column": self.cb_wc.isChecked(),

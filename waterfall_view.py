@@ -18,6 +18,11 @@ AXIS_TOP = 22
 AXIS_LEFT = 58
 DEBUG_AXIS = False
 
+# 축 눈금용 폰트 (DirectWrite 호환 Outline 폰트 지정으로 MS Sans Serif 비트맵 폴백 경고 방지)
+_AXIS_FONT = QFont("Malgun Gothic", 8)
+_AXIS_FONT.setStyleHint(QFont.SansSerif)
+_AXIS_FONT.setFamilies(["Malgun Gothic", "Segoe UI", "Arial", "sans-serif"])
+
 
 # ================================================================= 축 위젯
 class _TopAxis(QWidget):
@@ -33,17 +38,20 @@ class _TopAxis(QWidget):
         if not meta:
             return None
         m = meta[0]
-        sr = float(m.get("slant_range") or 0)
+        rp = float(m.get("range_port") or m.get("slant_range") or 0)
+        rs = float(m.get("range_stbd") or m.get("slant_range") or 0)
         np_ = int(m.get("n_port") or 0)
         ns_ = int(m.get("n_stbd") or 0)
-        if sr <= 0 or np_ <= 0 or ns_ <= 0:
+        if (rp <= 0 and rs <= 0) or np_ <= 0 or ns_ <= 0:
             return None
-        return sr, np_, ns_
+        rp = rp if rp > 0 else rs
+        rs = rs if rs > 0 else rp
+        return rp, rs, np_, ns_
 
-    def _meter_to_col(self, v, sr, np_, ns_):
+    def _meter_to_col(self, v, rp, rs, np_, ns_):
         if v <= 0:
-            return np_ * (1.0 + v / sr)
-        return np_ + (v / sr) * ns_
+            return np_ * (1.0 + v / max(rp, 1e-4))
+        return np_ + (v / max(rs, 1e-4)) * ns_
 
     def paintEvent(self, ev):
         p = QPainter(self)
@@ -54,18 +62,19 @@ class _TopAxis(QWidget):
             info = self._info()
             if info is None:
                 return
-            sr, np_, ns_ = info
+            rp, rs, np_, ns_ = info
             if DEBUG_AXIS:
                 print(f"[AXIS] w={self.width()} h={self.height()} "
-                      f"slant={sr} n_port={np_} n_stbd={ns_}")
+                      f"rp={rp} rs={rs} n_port={np_} n_stbd={ns_}")
 
             p.setPen(QColor(200, 200, 200))
-            p.setFont(QFont("", 7))
+            p.setFont(_AXIS_FONT)
 
             # 60px 간격 정도가 되도록 눈금 간격(m) 선택
             x0 = self._view.mapFromScene(QPointF(0, 0)).x()
             x1 = self._view.mapFromScene(QPointF(np_ + ns_, 0)).x()
-            px_per_m = max(abs(x1 - x0) / (2 * sr), 1e-9)
+            tot_range = rp + rs
+            px_per_m = max(abs(x1 - x0) / max(tot_range, 1e-4), 1e-9)
             step = 1.0
             for cand in (1, 2, 5, 10, 20, 25, 50, 100, 200, 500):
                 if cand * px_per_m >= 55:
@@ -74,9 +83,9 @@ class _TopAxis(QWidget):
             else:
                 step = 500
 
-            v = -(int(sr / step)) * step
-            while v <= sr + 1e-6:
-                col = self._meter_to_col(v, sr, np_, ns_)
+            v = -(int(rp / step)) * step
+            while v <= rs + 1e-6:
+                col = self._meter_to_col(v, rp, rs, np_, ns_)
                 x = self._view.mapFromScene(QPointF(col, 0)).x()
                 if -20 <= x <= self.width() + 20:
                     p.drawLine(int(x), AXIS_TOP - 5, int(x), AXIS_TOP - 1)
@@ -110,7 +119,7 @@ class _LeftAxis(QWidget):
             n = len(meta)
 
             p.setPen(QColor(200, 200, 200))
-            p.setFont(QFont("", 7))
+            p.setFont(_AXIS_FONT)
 
             y0 = self._view.mapFromScene(QPointF(0, 0)).y()
             y1 = self._view.mapFromScene(QPointF(0, n)).y()
@@ -143,6 +152,8 @@ class WaterfallView(QGraphicsView):
     pingHovered = Signal(int, int)          # (row=ping_idx, col=sample_idx)
     contactAdded = Signal(int, int)         # (row=ping_idx, col=sample_idx)
     bottomEditFinished = Signal(object)     # 새 altitude 배열 또는 None(취소)
+    bottomProgress = Signal(str)            # 진행 상황 및 가이드 메시지
+    roiSelected = Signal(int, int, int, int) # (r0, r1, c0, c1) 마우스 ROI 선택 영역
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -181,6 +192,9 @@ class WaterfallView(QGraphicsView):
 
         # ---- bottom tracking ----
         self._init_bottom_items()
+
+        # ---- ROI 선택 (모션 리플 분석용) ----
+        self._init_roi_items()
 
     # ------------------------------------------------ 배치
     def resizeEvent(self, ev):
@@ -238,45 +252,102 @@ class WaterfallView(QGraphicsView):
             self._scene.removeItem(it)
         self._contact_items.clear()
 
+    # ================================================ ROI 선택 (모션 리플 분석용)
+    def _init_roi_items(self):
+        self._roi_mode = False
+        self._roi_start_pos = None
+        self._roi_rect_item = None
+        self._roi_pen = QPen(QColor(0, 229, 255, 230), 1.5, Qt.DashLine)
+        self._roi_pen.setCosmetic(True)
+        self._roi_brush = QBrush(QColor(0, 229, 255, 30))
+
+    def set_roi_mode(self, on: bool):
+        """마우스 ROI 드래그 선택 모드 켜기/끄기."""
+        self._roi_mode = bool(on)
+        self._roi_start_pos = None
+        if self._roi_mode:
+            self.viewport().setCursor(Qt.CrossCursor)
+            self.bottomProgress.emit("리플 패턴 영역을 마우스 좌클릭으로 드래그하여 지정하세요.")
+        else:
+            self.viewport().unsetCursor()
+
+    def clear_roi(self):
+        """현재 표시된 ROI 사각형을 씬에서 제거."""
+        if self._roi_rect_item is not None:
+            self._scene.removeItem(self._roi_rect_item)
+            self._roi_rect_item = None
+
+    def set_roi_rect(self, r0: int, r1: int, c0: int, c1: int):
+        """특정 핑/열 좌표로 ROI 사각형 표시."""
+        self.clear_roi()
+        r = QRectF(c0, r0, max(1, c1 - c0), max(1, r1 - r0))
+        self._roi_rect_item = self._scene.addRect(r, self._roi_pen, self._roi_brush)
+        self._roi_rect_item.setZValue(75)
+
     # ================================================ bottom tracking
     def _init_bottom_items(self):
         self._bottom_edit = False
-        self._ctrl_pts = []                 # [(row, altitude_m)]
-        self._ctrl_items = []
-        pen_bt = QPen(QColor(0, 230, 118, 220), 1)
+        self._bt_edit_mode = "auto"         # "auto" (시드 자동 추적) 또는 "manual" (구간 수동 보정)
+        self._buffer_m = 3.5                # 이전 핑 대비 탐색 허용 버퍼 폭 (m)
+        self._max_step_m = 0.4              # 핑당 최대 고도 변화량 (m)
+        self._initial_alts = None           # 편집 시작 전 원본 고도 백업
+        self._current_alts = None           # 현재 추적/편집 중인 고도 배열 (N,)
+        self._seed_pts = []                 # [(row, altitude_m)] 시드 포인트
+        self._ctrl_pts = []                 # [(row, altitude_m)] 수동 보정 제어점
+        self._marker_items = []
+
+        pen_bt = QPen(QColor(0, 230, 118, 220), 1.5)
         pen_bt.setCosmetic(True)
-        pen_pv = QPen(QColor(255, 200, 0, 230), 1)
+        pen_pv = QPen(QColor(255, 215, 0, 240), 1.8)
         pen_pv.setCosmetic(True)
-        pen_pv.setStyle(Qt.DashLine)
+
         self._bt_port = self._scene.addPath(QPainterPath(), pen_bt)
         self._bt_stbd = self._scene.addPath(QPainterPath(), pen_bt)
         self._pv_port = self._scene.addPath(QPainterPath(), pen_pv)
         self._pv_stbd = self._scene.addPath(QPainterPath(), pen_pv)
-        for it in (self._bt_port, self._bt_stbd, self._pv_port, self._pv_stbd):
+        for it in (self._bt_port, self._bt_stbd):
             it.setZValue(50)
-        self._pv_port.setVisible(False)
-        self._pv_stbd.setVisible(False)
+        for it in (self._pv_port, self._pv_stbd):
+            it.setZValue(55)
+            it.setVisible(False)
 
     def _bt_cols(self, m, alt):
-        sr = float(m.get("slant_range") or 0)
-        np_, ns_ = int(m.get("n_port") or 0), int(m.get("n_stbd") or 0)
-        if sr <= 0 or np_ <= 0 or ns_ <= 0 or alt is None or alt <= 0:
+        if alt is None or alt <= 0:
             return None
-        frac = min(alt / sr, 1.0)
-        return (np_ - frac * np_, np_ + frac * ns_)
+        rp = float(m.get("range_port") or m.get("slant_range") or 0)
+        rs = float(m.get("range_stbd") or m.get("slant_range") or 0)
+        np_, ns_ = int(m.get("n_port") or 0), int(m.get("n_stbd") or 0)
+        if (rp <= 0 and rs <= 0) or np_ <= 0 or ns_ <= 0:
+            return None
+        rp = rp if rp > 0 else rs
+        rs = rs if rs > 0 else rp
+        frac_p = min(alt / rp, 1.0)
+        frac_s = min(alt / rs, 1.0)
+        return (np_ - frac_p * np_, np_ + frac_s * ns_)
 
     def _col_to_alt(self, m, col):
-        sr = float(m.get("slant_range") or 0)
+        rp = float(m.get("range_port") or m.get("slant_range") or 0)
+        rs = float(m.get("range_stbd") or m.get("slant_range") or 0)
         np_, ns_ = int(m.get("n_port") or 0), int(m.get("n_stbd") or 0)
-        if sr <= 0 or np_ <= 0 or ns_ <= 0:
+        if (rp <= 0 and rs <= 0) or np_ <= 0 or ns_ <= 0:
             return None
-        frac = (np_ - col) / np_ if col <= np_ else (col - np_) / ns_
-        return max(0.0, min(frac, 1.0)) * sr
+        rp = rp if rp > 0 else rs
+        rs = rs if rs > 0 else rp
+        if col <= np_:
+            frac = (np_ - col) / float(max(np_, 1))
+            return max(0.0, min(frac, 1.0)) * rp
+        else:
+            frac = (col - np_) / float(max(ns_, 1))
+            return max(0.0, min(frac, 1.0)) * rs
 
     def _build_paths(self, alt_arr):
         pp, ps = QPainterPath(), QPainterPath()
+        if alt_arr is None or len(alt_arr) == 0:
+            return pp, ps
         started = False
         for row, m in enumerate(self._meta):
+            if row >= len(alt_arr):
+                break
             cols = self._bt_cols(m, alt_arr[row])
             if cols is None:
                 started = False
@@ -306,26 +377,131 @@ class WaterfallView(QGraphicsView):
         self._bt_port.setVisible(on)
         self._bt_stbd.setVisible(on)
 
+    # ---------- 편집 파라미터 및 모드 제어 ----------
+    def set_edit_mode(self, mode: str):
+        """'auto' (시드 자동 추적) 또는 'manual' (구간 수동 보정)."""
+        self._bt_edit_mode = str(mode).lower()
+        if self._bt_edit_mode == "auto":
+            self.bottomProgress.emit(
+                f"시드 자동 추적 모드: First Bottom 지점을 클릭하세요. (버퍼: ±{self._buffer_m:.1f}m)"
+            )
+        else:
+            self.bottomProgress.emit(
+                "구간 수동 보정 모드: 시작점과 끝점을 클릭하면 선형 보정됩니다."
+            )
+
+    def set_buffer_m(self, buf: float):
+        """자동 추적 버퍼(m) 변경."""
+        self._buffer_m = max(0.2, float(buf))
+        if getattr(self, "_bottom_edit", False) and self._seed_pts:
+            self._run_auto_track()
+            self.bottomProgress.emit(
+                f"탐색 버퍼 변경 (±{self._buffer_m:.1f}m) → 자동 재추적 완료"
+            )
+
+    def smooth_current_bottom(self, k=5):
+        """현재 고도 곡선에 미세 지터 제거(중앙값 필터)를 적용."""
+        if not getattr(self, "_bottom_edit", False) or self._current_alts is None:
+            return
+        try:
+            from bottom_loader import median_filter1d
+            self._current_alts = median_filter1d(self._current_alts, k=k).astype(np.float32)
+            self._reapply_manual_overrides()
+            self._update_preview()
+            self.bottomProgress.emit(f"고도 데이터 평활화(k={k}) 적용 완료")
+        except Exception as e:
+            self.bottomProgress.emit(f"평활화 오류: {e}")
+
+    def reset_bottom(self):
+        """현재 편집 내용을 초기화하고 시작 시점으로 되돌림."""
+        if not getattr(self, "_bottom_edit", False):
+            return
+        self._seed_pts.clear()
+        self._ctrl_pts.clear()
+        self._clear_markers()
+        if self._initial_alts is not None and np.any(self._initial_alts >= 0.5):
+            self._current_alts = self._initial_alts.copy()
+        else:
+            self._current_alts = None
+        self._update_preview()
+        self.bottomProgress.emit("바탐 편집 초기화됨. 시드 지점을 새로 클릭하세요.")
+
+    def _reapply_manual_overrides(self):
+        """수동 제어점 구간을 현재 고도 배열에 반영."""
+        if self._current_alts is None or len(self._ctrl_pts) < 1:
+            return
+        pts = sorted(self._ctrl_pts, key=lambda x: x[0])
+        if len(pts) >= 2:
+            for i in range(len(pts) - 1):
+                r0, a0 = pts[i]
+                r1, a1 = pts[i + 1]
+                if r1 > r0:
+                    self._current_alts[r0:r1 + 1] = np.interp(
+                        np.arange(r0, r1 + 1), [r0, r1], [a0, a1]
+                    )
+        elif len(pts) == 1:
+            r, a = pts[0]
+            self._current_alts[r] = a
+
+    def _run_auto_track(self):
+        """등록된 시드 포인트들을 기반으로 전체 핑 자동 추적 수행."""
+        if not self._seed_pts or not self._meta:
+            return
+        try:
+            from bottom_loader import track_bottom_seeded
+            self._current_alts = track_bottom_seeded(
+                self._img_ref, self._meta, self._seed_pts,
+                buffer_m=self._buffer_m, max_step_m=self._max_step_m
+            )
+            self._reapply_manual_overrides()
+            self._rebuild_markers()
+            self._update_preview()
+        except Exception as e:
+            self.bottomProgress.emit(f"자동 추적 오류: {e}")
+
     # ---------- 편집 워크플로우 ----------
     def start_bottom_edit(self):
         if not self._meta:
             return False
         self._bottom_edit = True
+        self._bt_edit_mode = "auto"
+        self._seed_pts.clear()
         self._ctrl_pts.clear()
-        self._clear_ctrl_items()
+        self._clear_markers()
+
+        # 기존 고도 확인
+        self._initial_alts = np.array(
+            [float(m.get("altitude") or 0.0) for m in self._meta], dtype=np.float32
+        )
+        if np.any(self._initial_alts >= 0.5):
+            self._current_alts = self._initial_alts.copy()
+        else:
+            self._current_alts = None
+
         self._pv_port.setVisible(True)
         self._pv_stbd.setVisible(True)
+        self._update_preview()
         self.viewport().setCursor(Qt.CrossCursor)
+
+        valid_cnt = int(np.count_nonzero(self._initial_alts >= 0.5)) if self._initial_alts is not None else 0
+        if valid_cnt > 0:
+            self.bottomProgress.emit(
+                f"바탐 편집 활성화: 기존 고도({valid_cnt}개 핑) 확인됨. 시드를 클릭하면 자동 재추적됩니다."
+            )
+        else:
+            self.bottomProgress.emit(
+                "바탐 편집 활성화: 영상에서 해저면(First Bottom) 지점을 마우스 좌클릭하세요."
+            )
         return True
 
     def finish_bottom_edit(self):
         if not self._bottom_edit:
             return
-        new_alt = self._interp_altitudes() if self._ctrl_pts else None
+        final_alt = self._current_alts.copy() if self._current_alts is not None else None
         self._exit_edit()
-        if new_alt is not None:
-            self.update_bottom_line(new_alt)
-        self.bottomEditFinished.emit(new_alt)
+        if final_alt is not None:
+            self.update_bottom_line(final_alt)
+        self.bottomEditFinished.emit(final_alt)
 
     def cancel_bottom_edit(self, silent=False):
         if not getattr(self, "_bottom_edit", False):
@@ -336,51 +512,79 @@ class WaterfallView(QGraphicsView):
 
     def _exit_edit(self):
         self._bottom_edit = False
+        self._seed_pts.clear()
         self._ctrl_pts.clear()
-        self._clear_ctrl_items()
+        self._clear_markers()
         self._pv_port.setPath(QPainterPath())
         self._pv_stbd.setPath(QPainterPath())
         self._pv_port.setVisible(False)
         self._pv_stbd.setVisible(False)
         self.viewport().unsetCursor()
 
-    def _clear_ctrl_items(self):
-        for it in self._ctrl_items:
+    def _clear_markers(self):
+        for it in self._marker_items:
             self._scene.removeItem(it)
-        self._ctrl_items.clear()
-
-    def _interp_altitudes(self):
-        base = np.array([float(m.get("altitude") or 0) for m in self._meta])
-        pts = sorted(self._ctrl_pts)
-        rows = np.array([p[0] for p in pts], float)
-        alts = np.array([p[1] for p in pts], float)
-        out = base.copy()
-        r0, r1 = int(rows[0]), int(rows[-1])
-        out[r0:r1 + 1] = np.interp(np.arange(r0, r1 + 1), rows, alts)
-        return out
+        self._marker_items.clear()
 
     def _update_preview(self):
-        pp, ps = self._build_paths(self._interp_altitudes())
-        self._pv_port.setPath(pp)
-        self._pv_stbd.setPath(ps)
+        if self._current_alts is not None:
+            pp, ps = self._build_paths(self._current_alts)
+            self._pv_port.setPath(pp)
+            self._pv_stbd.setPath(ps)
+        else:
+            self._pv_port.setPath(QPainterPath())
+            self._pv_stbd.setPath(QPainterPath())
 
-    def _rebuild_ctrl_markers(self):
-        self._clear_ctrl_items()
-        pen = QPen(QColor(255, 60, 60), 1)
-        pen.setCosmetic(True)
-        brush = QBrush(QColor(255, 60, 60, 180))
-        for row, alt in self._ctrl_pts:
+    def _rebuild_markers(self):
+        self._clear_markers()
+        if not self._meta:
+            return
+
+        # 1. 자동 추적 시드 포인트 (골든 옐로우 / 시안 테두리 원)
+        pen_seed = QPen(QColor(0, 220, 255), 1.5)
+        pen_seed.setCosmetic(True)
+        brush_seed = QBrush(QColor(255, 215, 0, 230))
+
+        for row, alt in self._seed_pts:
+            if row < 0 or row >= len(self._meta):
+                continue
             cols = self._bt_cols(self._meta[row], alt)
             if cols is None:
                 continue
             for c in cols:
-                it = self._scene.addRect(c - 2, row - 1.5, 4, 4, pen, brush)
-                it.setZValue(60)
+                it = self._scene.addEllipse(c - 4, row - 4, 8, 8, pen_seed, brush_seed)
+                it.setZValue(65)
                 it.setFlag(it.GraphicsItemFlag.ItemIgnoresTransformations)
-                self._ctrl_items.append(it)
+                self._marker_items.append(it)
+
+        # 2. 수동 보정 제어점 (화이트 테두리 / 오렌지-레드 사각)
+        pen_ctrl = QPen(QColor(255, 255, 255), 1.5)
+        pen_ctrl.setCosmetic(True)
+        brush_ctrl = QBrush(QColor(255, 75, 75, 230))
+
+        for row, alt in self._ctrl_pts:
+            if row < 0 or row >= len(self._meta):
+                continue
+            cols = self._bt_cols(self._meta[row], alt)
+            if cols is None:
+                continue
+            for c in cols:
+                it = self._scene.addRect(c - 3.5, row - 3.5, 7, 7, pen_ctrl, brush_ctrl)
+                it.setZValue(66)
+                it.setFlag(it.GraphicsItemFlag.ItemIgnoresTransformations)
+                self._marker_items.append(it)
 
     # ================================================ 마우스 / 키
     def mouseMoveEvent(self, ev):
+        # ---- ROI 선택 모드 드래그 ----
+        if getattr(self, "_roi_mode", False) and getattr(self, "_roi_start_pos", None) is not None:
+            pos = self.mapToScene(ev.position().toPoint())
+            rect = QRectF(self._roi_start_pos, pos).normalized()
+            if self._roi_rect_item is not None:
+                self._roi_rect_item.setRect(rect)
+            ev.accept()
+            return
+
         if self._meta:
             pos = self.mapToScene(ev.position().toPoint())
             row, col = int(pos.y()), int(pos.x())
@@ -402,6 +606,23 @@ class WaterfallView(QGraphicsView):
         super().leaveEvent(ev)
 
     def mousePressEvent(self, ev):
+        # ---- ROI 드래그 선택 모드 ----
+        if getattr(self, "_roi_mode", False) and self._meta:
+            if ev.button() == Qt.LeftButton:
+                pos = self.mapToScene(ev.position().toPoint())
+                self._roi_start_pos = pos
+                self.clear_roi()
+                self._roi_rect_item = self._scene.addRect(QRectF(pos, pos), self._roi_pen, self._roi_brush)
+                self._roi_rect_item.setZValue(75)
+                ev.accept()
+                return
+            elif ev.button() == Qt.RightButton:
+                self.clear_roi()
+                self._roi_start_pos = None
+                self.set_roi_mode(False)
+                ev.accept()
+                return
+
         # ---- 바탐 편집 모드 ----
         if getattr(self, "_bottom_edit", False) and self._meta:
             pos = self.mapToScene(ev.position().toPoint())
@@ -409,27 +630,85 @@ class WaterfallView(QGraphicsView):
             if 0 <= row < len(self._meta):
                 if ev.button() == Qt.LeftButton:
                     alt = self._col_to_alt(self._meta[row], pos.x())
-                    if alt is not None and alt > 0:
-                        self._ctrl_pts = [p for p in self._ctrl_pts
-                                          if p[0] != row]
-                        self._ctrl_pts.append((row, alt))
-                        self._rebuild_ctrl_markers()
-                        self._update_preview()
-                elif ev.button() == Qt.RightButton and self._ctrl_pts:
-                    i = min(range(len(self._ctrl_pts)),
-                            key=lambda k: abs(self._ctrl_pts[k][0] - row))
-                    self._ctrl_pts.pop(i)
-                    self._rebuild_ctrl_markers()
-                    self._update_preview()
+                    if alt is not None and alt >= 0.3:
+                        if self._bt_edit_mode == "auto":
+                            # 시드 포인트 추가 / 갱신
+                            self._seed_pts = [p for p in self._seed_pts if abs(p[0] - row) > 10]
+                            self._seed_pts.append((row, alt))
+                            self._seed_pts.sort(key=lambda x: x[0])
+                            self._run_auto_track()
+                            self.bottomProgress.emit(
+                                f"자동 추적 완료: {len(self._meta)}개 핑 "
+                                f"(시드 {len(self._seed_pts)}개, 버퍼 ±{self._buffer_m:.1f}m)"
+                            )
+                        else:
+                            # 수동 보정 제어점 추가
+                            self._ctrl_pts = [p for p in self._ctrl_pts if abs(p[0] - row) > 5]
+                            self._ctrl_pts.append((row, alt))
+                            self._ctrl_pts.sort(key=lambda x: x[0])
+                            if self._current_alts is None:
+                                self._current_alts = np.full(len(self._meta), alt, dtype=np.float32)
+                            self._reapply_manual_overrides()
+                            self._rebuild_markers()
+                            self._update_preview()
+                            self.bottomProgress.emit(
+                                f"수동 제어점 추가됨 (총 {len(self._ctrl_pts)}개 포인트)"
+                            )
+                elif ev.button() == Qt.RightButton:
+                    if self._bt_edit_mode == "auto" and self._seed_pts:
+                        i = min(range(len(self._seed_pts)),
+                                key=lambda k: abs(self._seed_pts[k][0] - row))
+                        self._seed_pts.pop(i)
+                        if self._seed_pts:
+                            self._run_auto_track()
+                        else:
+                            if self._initial_alts is not None and np.any(self._initial_alts >= 0.5):
+                                self._current_alts = self._initial_alts.copy()
+                            else:
+                                self._current_alts = None
+                            self._rebuild_markers()
+                            self._update_preview()
+                        self.bottomProgress.emit("시드 포인트 제거됨")
+                    elif self._bt_edit_mode == "manual" and self._ctrl_pts:
+                        i = min(range(len(self._ctrl_pts)),
+                                key=lambda k: abs(self._ctrl_pts[k][0] - row))
+                        self._ctrl_pts.pop(i)
+                        if self._seed_pts:
+                            self._run_auto_track()
+                        else:
+                            if self._initial_alts is not None and np.any(self._initial_alts >= 0.5):
+                                self._current_alts = self._initial_alts.copy()
+                            self._reapply_manual_overrides()
+                            self._rebuild_markers()
+                            self._update_preview()
+                        self.bottomProgress.emit("수동 제어점 제거됨")
             ev.accept()
             return
 
-
         super().mousePressEvent(ev)
 
+    def mouseReleaseEvent(self, ev):
+        # ---- ROI 드래그 선택 완료 ----
+        if getattr(self, "_roi_mode", False) and getattr(self, "_roi_start_pos", None) is not None:
+            pos = self.mapToScene(ev.position().toPoint())
+            rect = QRectF(self._roi_start_pos, pos).normalized()
+            self._roi_start_pos = None
+            if self._meta:
+                n = len(self._meta)
+                r0 = max(0, min(n - 1, int(rect.top())))
+                r1 = max(0, min(n, int(rect.bottom())))
+                c0 = max(0, int(rect.left()))
+                c1 = int(rect.right())
+                if r1 - r0 >= 5:
+                    self.roiSelected.emit(r0, r1, c0, c1)
+                    self.bottomProgress.emit(f"ROI 선택됨: Ping #{r0} ~ #{r1} ({r1 - r0} 핑)")
+            ev.accept()
+            return
+        super().mouseReleaseEvent(ev)
+
     def mouseDoubleClickEvent(self, ev):
-        # 바탐 편집 중에는 더블클릭 무시 (제어점 오작동 방지)
-        if getattr(self, "_bt_editing", False):   # ← 속성 없으면 False 취급
+        # 바탐 편집 또는 ROI 선택 중에는 더블클릭 무시 (제어점 오작동 방지)
+        if getattr(self, "_bottom_edit", False) or getattr(self, "_roi_mode", False):
             ev.accept()
             return
         # ---- 더블클릭 = contact 추가 ----
@@ -444,6 +723,11 @@ class WaterfallView(QGraphicsView):
         super().mouseDoubleClickEvent(ev)
         
     def keyPressEvent(self, ev):
+        if getattr(self, "_roi_mode", False) and ev.key() == Qt.Key_Escape:
+            self.clear_roi()
+            self.set_roi_mode(False)
+            ev.accept()
+            return
         if getattr(self, "_bottom_edit", False):
             if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
                 self.finish_bottom_edit()

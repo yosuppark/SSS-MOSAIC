@@ -40,6 +40,10 @@ def _as_alt_array(obj, n):
     if obj is None:
         return None
     if isinstance(obj, dict):
+        if obj and all(isinstance(k, (int, np.integer)) or (isinstance(k, str) and k.isdigit()) for k in list(obj.keys())[:10]):
+            sorted_keys = sorted([int(k) for k in obj.keys()])
+            arr = np.array([float(obj[k]) for k in sorted_keys], dtype=np.float64)
+            return _resample(arr, n)
         for k in ("altitude_m", "altitude", "alt", "bottom"):
             if k in obj:
                 return _resample(np.asarray(obj[k], dtype=np.float64), n)
@@ -217,28 +221,96 @@ def _apply_bottom(path, P, S, meta, p):
     return alt
 
 
+# ============================================ navigation 결정
+def _apply_nav(path, meta, p):
+    """사이드카 nav/<파일명>.nav.csv 가 있으면 x, y, hd 를 보정값으로 교체.
+    사이드카가 없더라도 auto_nav=True 인 경우 즉석에서 핑별 보간 적용."""
+    try:
+        from processing.nav_io import load_nav
+        nav_data = load_nav(path)
+        if nav_data:
+            applied = 0
+            for m in meta:
+                p_no = m.get("no", m.get("ping_no"))
+                if p_no in nav_data:
+                    entry = nav_data[p_no]
+                    m["x"] = entry["x"]
+                    m["y"] = entry["y"]
+                    m["hd"] = entry["heading"]
+                    applied += 1
+            print("  nav: 사이드카 적용 완료 (%d/%d pings)" % (applied, len(meta)))
+            return True
+    except Exception as e:
+        print("  nav: 사이드카 로드 중 오류:", e)
+
+    if bool(p.get("auto_nav", True)):
+        try:
+            from processing.nav_interpolator import process_navigation
+            nav_meta = []
+            for m in meta:
+                nav_meta.append({
+                    "ping_no": m.get("no", 0),
+                    "time": m.get("time", ""),
+                    "x": m.get("x", 0.0),
+                    "y": m.get("y", 0.0),
+                    "heading": m.get("hd", 0.0),
+                })
+            results, stats = process_navigation(
+                nav_meta,
+                spike_filter=True,
+                max_speed_mps=float(p.get("max_speed_mps", 12.0)),
+                smooth_window_sec=float(p.get("smooth_window_sec", 3.0)),
+                interp_method="hermite",
+            )
+            lons = results["lons"]
+            lats = results["lats"]
+            hdgs = results["headings"]
+            for i, m in enumerate(meta):
+                if i < len(lons):
+                    m["x"] = float(lons[i])
+                    m["y"] = float(lats[i])
+                    m["hd"] = float(hdgs[i])
+            print("  nav: 자동 보간 적용 완료 (Ping rate: %.1f Hz, 스파이크: %d건)"
+                  % (stats.get("avg_ping_rate", 0.0), stats.get("spikes_detected", 0)))
+            return True
+        except Exception as e:
+            print("  nav: 자동 보간 처리 실패/건너뜀:", e)
+    return False
+
+
 # ============================================ 파라미터 변환
 def params_to_cfg(p):
     cfg = dict(MM.DEF)
     clip = float(p.get("clip_percent", 2.0))
     clip = min(max(clip, 0.0), 40.0)
+    files = list(p.get("xtf_files") or p.get("paths") or p.get("files") or [])
+    outdir = p.get("out_dir") or p.get("outdir") or MM.DEF["outdir"]
+    name = p.get("out_name") or p.get("name") or ""
+    res = float(p.get("resolution") or p.get("res") or 0.2)
+    stride = max(1, int(p.get("ping_stride") or p.get("stride") or 1))
+    maxrange = float(p.get("max_range") or p.get("maxrange") or 0.0)
+    minalt = float(p.get("min_alt") or p.get("minalt") or 0.5)
+    wc = float(p.get("wc_margin") or p.get("wc") or 1.0)
+    avg = bool(p.get("avc_enable") if "avc_enable" in p else p.get("avg", True))
+
     cfg.update({
-        "files": list(p.get("xtf_files") or []),
-        "outdir": p.get("out_dir") or MM.DEF["outdir"],
-        "name": p.get("out_name") or "",
+        "files": files,
+        "outdir": outdir,
+        "name": name,
         "epsg": int(p.get("epsg", 32652)),
-        "res": float(p.get("resolution", 0.2)),
-        "stride": max(1, int(p.get("ping_stride", 1))),
-        "maxrange": float(p.get("max_range", 0.0)),
-        "minalt": float(p.get("min_alt", 0.5)),
-        "wc": float(p.get("wc_margin", 1.0)),
+        "res": res,
+        "stride": stride,
+        "maxrange": maxrange,
+        "minalt": minalt,
+        "wc": wc,
         "slant": bool(p.get("slant_correct", True)),
         "removewc": bool(p.get("remove_water_column", True)),
         "port": bool(p.get("use_port", True)),
         "stbd": bool(p.get("use_stbd", True)),
         "flip_port": bool(p.get("flip_port", True)),
-        "avg": bool(p.get("avc_enable", True)),
+        "avg": avg,
         "cog": bool(p.get("use_cog", False)),
+        "swap_channels": bool(p.get("swap_channels", False) or p.get("swap_port_stbd", False)),
         "lo": clip,
         "hi": 100.0 - clip,
         "fill": int(p.get("fill_iter", 1)) if p.get("fill_holes", True) else 0,
@@ -262,15 +334,20 @@ def build_mosaic_from_params(p):
 
     orig_read = MM.read_xtf
 
-    def _read_with_bottom(path, flip_port=True):
-        P, S, meta = orig_read(path, flip_port)
+    def _read_with_bottom_and_nav(path, flip_port=True, *args, **kwargs):
+        swap_ch = kwargs.get("swap_channels", args[0] if args else bool(cfg.get("swap_channels", False)))
+        P, S, meta = orig_read(path, flip_port=flip_port, swap_channels=swap_ch)
         try:
             _apply_bottom(path, P, S, meta, p)
         except Exception as e:
             print("  [경고] bottom 처리 실패, 센서 고도 사용:", e)
+        try:
+            _apply_nav(path, meta, p)
+        except Exception as e:
+            print("  [경고] nav 처리 실패, 기본 항법 사용:", e)
         return P, S, meta
 
-    MM.read_xtf = _read_with_bottom
+    MM.read_xtf = _read_with_bottom_and_nav
     try:
         img, x0, y1, res = MM.build(cfg)
     finally:
