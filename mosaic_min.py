@@ -58,7 +58,13 @@ def _pad(rows):
 
 
 def read_xtf(path, flip_port=True, swap_channels=False):
-    """옛 로더 로직 그대로 원시 float 진폭과 메타를 읽는다. swap_channels=True 시 Port와 Starboard 채널을 상호 교환."""
+    """원시 float 진폭과 메타를 읽는다. (Sidescan Sonar 및 Norbit MBES 백스캐터 완벽 지원)"""
+    try:
+        from xtf_loader import read_xtf_channels
+        return read_xtf_channels(path, flip_port=flip_port, swap_channels=swap_channels)
+    except Exception as e:
+        print(f"  [mosaic_min] read_xtf_channels 오류, fallback 로더 사용: {e}")
+
     _fh, packets = pyxtf.xtf_read(path)
     pings = packets.get(pyxtf.XTFHeaderType.sonar, [])
     if not pings:

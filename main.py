@@ -1,5 +1,5 @@
 
-"""main.py — XTF Waterfall Viewer v5.1 (다중 파일 + 모자이크 오버레이)
+"""main.py — XTF Processor V1.0 (다중 파일 + 모자이크 오버레이)
 - 복수 XTF 동시 열기 (Ctrl+O)
 - 파일별 색상 항적/coverage 지도 표시, 활성 파일 강조
 - Waterfall 하단 파일 순번 표시 + 좌우 전환 (◀/▶, PgUp/PgDn)
@@ -177,7 +177,7 @@ def _as_path_list(v):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("XTF Waterfall Viewer v5.1")
+        self.setWindowTitle("XTF Processor V1.0")
         self.resize(1500, 900)
 
         # ---- 상태 ----
@@ -480,10 +480,10 @@ class MainWindow(QMainWindow):
         if has:
             name = os.path.basename(self.files[self.cur_idx]["path"])
             self.lbl_file.setText(f"[{self.cur_idx + 1}/{n}]  {name}")
-            self.setWindowTitle(f"XTF Waterfall Viewer v5.1 — {name}")
+            self.setWindowTitle(f"XTF Processor V1.0 — {name}")
         else:
             self.lbl_file.setText("파일 없음")
-            self.setWindowTitle("XTF Waterfall Viewer v5.1")
+            self.setWindowTitle("XTF Processor V1.0")
 
     # ================================================ 표시 (밝기/대비)
     def _on_display_changed(self):

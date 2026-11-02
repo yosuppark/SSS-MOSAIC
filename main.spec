@@ -24,7 +24,7 @@ import sqlite3
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # ------------------------------------------------------------------ 설정
-APP_NAME = "main"
+APP_NAME = "XTF_Processor_V1.0"
 ENTRY_SCRIPT = "main.py"
 CONSOLE = True          # 문제 해결 전까지 True. 완료 후 False.
 ONEFILE = False         # 문제 해결 전까지 False(onedir) 권장.

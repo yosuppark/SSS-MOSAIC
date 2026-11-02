@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>사이드스캔 소나 워터폴 뷰어 및 모자익 시스템 사용자 매뉴얼</title>
+<title>XTF Processor V1.0 사용자 설명서</title>
 <style>
   body { font-family: 'Malgun Gothic', 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #262626; max-width: 900px; margin: 40px auto; padding: 0 20px; }
   h1 { color: #1F497D; border-bottom: 2px solid #1F497D; padding-bottom: 10px; margin-top: 40px; }
@@ -23,101 +23,59 @@
 </head>
 <body>
 <div class="title-box">
-  <h1>사이드스캔 소나(Sidescan Sonar) 워터폴 뷰어 및 모자익 시스템</h1>
-  <p>사용자 매뉴얼 (User Manual v2.5) — Google Docs 호환 문서</p>
+  <h1>XTF Processor V1.0</h1>
+  <p>Sidescan Sonar & Norbit MBES Backscatter Mosaic Suite 사용자 설명서</p>
 </div>
 <div class="callout">
   <strong>💡 안내:</strong> 본 문서는 Google Drive(drive.google.com)에 업로드 시 Google Docs로 즉시 열람 및 공동 편집이 가능한 <code>USER_MANUAL.docx</code>와 100% 동일한 내용을 담고 있습니다.
 </div>
-<p>본 문서는 사이드스캔 소나(SSS) 데이터의 시각화, First Bottom 추적, 방사보정(AVG/AGC), 토우피쉬 운동 효과(피칭/롤링) 제거, Fishbone 항적/헤딩 보정, 그리고 GeoTIFF 모자익 제작까지 전체 작업 공정을 설명하는 사용자 설명서입니다.</p>
+<p>본 문서는 사이드스캔 소나(SSS) 및 **Norbit MBES 백스캐터(Backscatter)** 데이터의 시각화, First Bottom 추적, 방사보정(AVG/AGC), 토우피쉬 운동 효과 제거, Fishbone 항적/헤딩 보정, 그리고 GeoTIFF 모자익 제작까지 전체 작업 공정을 설명하는 사용자 설명서입니다.</p>
 <hr>
 <h2>📌 목차 (Table of Contents)</h2>
 <p><strong>1. </strong> **시스템 개요 및 주요 특징**</p>
 <p><strong>2. </strong> **프로그램 시작 및 환경 요구사항**</p>
-<p><strong>3. </strong> **사용자 인터페이스(UI) 구조 및 조작법**</p>
+<p><strong>3. </strong> **Norbit MBES 백스캐터 데이터 로드 및 처리**</p>
 <p><strong>4. </strong> **First Bottom 추적 및 경사거리(Slant-Range) 보정**</p>
 <p><strong>5. </strong> **방사보정(Radiometric AVG / ARC) 및 TVG 프로세싱**</p>
 <p><strong>6. </strong> **토우피쉬 운동 효과(피칭/롤링 리플) 제거**</p>
 <p>7. **Fishbone 항적 및 헤딩(Heading) 튜너**</p>
-<p>8. **정밀 GeoTIFF 모자익 제작**</p>
+<p>8. **정밀 GeoTIFF 백스캐터 모자익 제작**</p>
 <p>9. **문제 해결 및 FAQ**</p>
-<p>10. **구글 닥스(Google Docs)에서 본 매뉴얼 열람 및 공동 편집 방법**</p>
+<p>10. **구글 닥스(Google Docs)에서 본 매뉴얼 활용 방법**</p>
 <hr>
 <h2>제1장. 시스템 개요 및 주요 특징</h2>
-<p>본 소프트웨어는 해양 물리탐사, 수중 구조물 진단, 침몰선/장애물 탐색, 해저 지질 조사 분야에서 널리 활용되는 사이드스캔 소나(Sidescan Sonar) 데이터를 전문적으로 후처리하고 맵 모자익을 생성하는 통합 시스템입니다.</p>
-<ul><li>**데이터 포맷 지원**: 표준 XTF (eXtended Triton Format) 및 Lowrance SL2 소나 데이터 지원</li></ul>
+<p>XTF Processor V1.0은 해양 물리탐사, 수중 구조물 진단, 침몰선/장애물 탐색, 해저 지질 조사 분야에서 널리 활용되는 사이드스캔 소나(Sidescan Sonar) 및 **Norbit MBES 백스캐터 데이터**를 전문적으로 후처리하고 맵 모자익을 생성하는 통합 시스템입니다.</p>
+<ul><li>**데이터 포맷 지원**: 표준 XTF 및 Lowrance SL2 소나 데이터 지원</li></ul>
+<ul><li>**Norbit MBES 백스캐터 지원**: Norbit iWBMS, WINGHEAD 등 멀티빔 음향측심기 XTF export 완벽 대응 (단일 Swath, Port/Stbd, 멀티채널, Bathy 패킷 자동 해석)</li></ul>
 <ul><li>**워터폴 디스플레이**: 대용량 소나 신호를 지연 없이 탐색할 수 있는 GPU 가속 및 메모리 맵핑 뷰어</li></ul>
 <ul><li>**First Bottom 고도 보정**: 해저면 경계 신호 자동 코리도(Corridor) 추적 및 조각별 선형 보간 수동 편집</li></ul>
 <ul><li>**방사보정 (AVG/AGC)**: Beaudoin et al. 연구 기반 각도별 음향 산란 보정 및 Water Column 신호 보존</li></ul>
 <ul><li>**운동 효과 보정**: 해상 파도에 따른 토우피쉬 피칭/롤링 리플 무늬 주파수 분석 및 복원 (실시간 A/B 비교)</li></ul>
 <ul><li>**Fishbone 항적 튜너**: GPS 오차 보정, 고차 스플라인 항적 보간, 헤딩 평활화 및 시계열 동시 비교</li></ul>
-<ul><li>**GeoTIFF 모자익**: 실시간 Swath Coverage(조사폭) 산출 및 Alpha 블렌딩 적용 고해상도 GeoTIFF 래스터 출력</li></ul>
+<ul><li>**GeoTIFF 모자익**: 실시간 Swath Coverage(조사폭) 산출 및 Alpha 블렌딩 적용 고해상도 백스캐터 GeoTIFF 래스터 출력</li></ul>
 <hr>
 <h2>제2장. 프로그램 시작 및 환경 요구사항</h2>
-<h3>2.1 배포용 독립 실행 파일(EXE) 실행 (추천)</h3>
-<p><strong>1. </strong> 배포 패키지 `dist/XTF_Mosaic_Viewer_Release.zip`을 작업 폴더에 압축 해제합니다.</p>
-<p><strong>2. </strong> 폴더 내 `main/main.exe`를 더블 클릭하여 실행합니다.</p>
+<h3>2.1 배포용 독립 실행 파일(XTF_Processor_V1.0.exe) 실행</h3>
+<p><strong>1. </strong> 배포 패키지 `dist/XTF_Processor_V1.0_Release.zip`을 작업 폴더에 압축 해제합니다.</p>
+<p><strong>2. </strong> 폴더 내 `XTF_Processor_V1.0/XTF_Processor_V1.0.exe`를 더블 클릭하여 실행합니다.</p>
 <p><strong>3. </strong> 별도의 Python 환경 설치 없이 타 PC에서도 즉시 구동됩니다.</p>
-<h3>2.2 시스템 요구 사양</h3>
 <hr>
-<h2>제3장. 사용자 인터페이스(UI) 구조 및 조작법</h2>
-<h3>3.1 화면 레이아웃</h3>
-<ul><li>**상단 메뉴바**: 파일 열기, 모자익 빌더 호출, 프로세싱 도구 실행</li></ul>
-<ul><li>**메인 툴바**: AGC 토글, 바탐 편집 모드, 대비/밝기 슬라이더, 컬러맵 선택</li></ul>
-<ul><li>**좌측 파일 패널**: 로드된 XTF 파일 목록, 핑 수, 시간, 유효성 상태 표시</li></ul>
-<ul><li>**중앙 워터폴 뷰어**: 좌현(Port)/우현(Starboard) 핑 데이터 고해상도 렌더링</li></ul>
-<ul><li>**우측 지도(Map) 뷰**: Leaflet 기반 실제 선박/토우피쉬 항적 및 모자익 오버레이</li></ul>
-<h3>3.2 워터폴 조작 단축키</h3>
-<ul><li>`마우스 휠 스크롤`: 상하 핑 이동</li></ul>
-<ul><li>`Ctrl + 마우스 휠`: 시간축 및 사거리(Range) 확대 / 축소</li></ul>
-<ul><li>`마우스 휠 클릭 + 드래그`: 화면 자유 이동 (Panning)</li></ul>
-<ul><li>`마우스 좌클릭`: 바탐 편집 모드에서 해저면 기준점 피킹</li></ul>
-<ul><li>`마우스 우클릭 드래그`: 타겟(Contact) 관심 영역 지정 및 계측/저장</li></ul>
+<h2>제3장. Norbit MBES 백스캐터 데이터 로드 및 처리</h2>
+<p>Norbit MBES(Multibeam Echosounder) 시스템(iWBMS, WINGHEAD 등)에서 export한 XTF 파일의 특징과 처리 절차:</p>
+<p><strong>1. </strong> **단일 Swath Composite 채널**: 좌우 전체가 1개의 cross-track 백스캐터 라인으로 저장된 경우 중앙을 기준으로 좌현(Port)과 우현(Starboard)으로 자동 분할 정렬.</p>
+<p><strong>2. </strong> **Bathy + Backscatter 멀티채널**: 수심(Bathy) 채널을 자동 식별하여 배제하고 순수 음향 반사 강도(Port/Stbd) 채널만을 스마트 매핑.</p>
+<p><strong>3. </strong> **XTF_HEADER_BATHY (2) 및 Snippet 패킷**: 소나 패킷이 아닌 Bathymetry 패킷으로 저장된 멀티빔 XTF 파일도 자동 감지하여 채널 데이터 추출.</p>
+<p><strong>4. </strong> **음수 데시벨(dB) 정규화**: -60dB ~ 0dB 등 다양한 동적 범위의 음향 반사 강도를 0~255 그레이스케일로 선명하게 정규화.</p>
 <hr>
-<h2>제4장. First Bottom 추적 및 경사거리 보정</h2>
-<p>사이드스캔 소나는 해저면 지형을 평면(Ground Range)으로 투영하기 위해 토우피쉬의 고도(Altitude, First Bottom) 정보가 필수적입니다.</p>
-<h3>4.1 하이브리드 바탐 추적 및 편집 워크플로우</h3>
-<p><strong>1. </strong> 툴바에서 **[바탐 편집]** 모드를 활성화합니다.</p>
-<p><strong>2. </strong> 워터폴 화면에서 워터컬럼과 해저면의 첫 반사 경계(First Bottom) 지점을 클릭합니다.</p>
-<p><strong>3. </strong> 시스템이 클릭된 지점을 기준으로 상하 버퍼(코리도) 내에서 전/후 핑의 해저면을 자동 추적합니다.</p>
-<p><strong>4. </strong> 신호가 약하거나 튀는 구간은 직접 마우스 클릭으로 조각별 선형(Piecewise Linear)으로 보정합니다.</p>
-<p><strong>5. </strong> **[바탐 저장]**을 누르면 `[파일명].bottom.csv`가 생성되어 영구 보존 및 모자익 시 자동 반영됩니다.</p>
-<hr>
-<h2>제5장. 방사보정(Radiometric AVG / ARC) 및 TVG 프로세싱</h2>
-<p>소나 신호는 센서로부터 멀어질수록 감쇄되고 직하방(Nadir)은 과도하게 밝은 정반사(Specular Peak)가 발생합니다.</p>
-<h3>5.1 Beaudoin et al. 기반 방사보정 특징</h3>
-<ul><li>**Water Column 신호 보존**: Nadir와 First Bottom 사이의 수층 영역은 해저면 게인을 적용하지 않고 순수 수층 신호 레벨을 그대로 보존하여 워터컬럼 노이즈 증폭 차단.</li></ul>
-<ul><li>**해저면 각도 보정**: First Bottom 이후의 해저면 샘플만을 사거리별로 정렬하여 각도 반응 곡선(ARC)을 추출하고 평탄화.</li></ul>
-<ul><li>**초고속 연산**: 순수 NumPy cumsum 벡터 연산으로 구현되어 수천 핑의 데이터도 0.1초 내에 실시간 처리.</li></ul>
-<ul><li>**성능 검증**: 정반사 피크(135.0)와 외곽 감쇄(73.9)로 인한 표준편차 18.94의 심한 편차가 방사보정 적용 후 표준편차 0.86의 균일한 평탄화(~125)를 달성.</li></ul>
-<hr>
-<h2>제6장. 토우피쉬 운동 효과(피칭/롤링 리플) 제거</h2>
-<p>해상 파도(Swell)에 의해 토우피쉬가 피칭(Pitch)과 롤링(Roll)을 겪으며 워터폴 상에 대칭 반복되는 명암 물결 무늬(Ripple Effect)를 복원합니다.</p>
-<h3>6.1 대화형 리플 분석 및 복원 단계</h3>
-<p><strong>1. </strong> 상단 메뉴 `프로세싱` -&gt; `토우피쉬 운동 리플 보정` 실행.</p>
-<p><strong>2. </strong> 워터폴 화면에서 리플 무늬가 뚜렷한 구간을 마우스로 드래그하여 사각 영역(ROI) 지정.</p>
-<p><strong>3. </strong> 다이얼로그에서 주파수 스펙트럼(FFT) 분석으로 파도 주기(예: 8~25 Pings) 자동 검출.</p>
-<p><strong>4. </strong> 파라미터 조절 후 `미리보기` 및 `A/B 전환` 버튼으로 보정 전/후를 실시간 1:1 비교.</p>
-<p><strong>5. </strong> 최적 결과 확인 후 `적용`을 클릭하여 워터폴 영상에 최종 반영.</p>
-<hr>
-<h2>제7장. Fishbone 항적 및 헤딩(Heading) 튜너</h2>
-<p>GPS 갱신 지연이나 조류(Crab Angle) 영향으로 소나 트랙이 찌그러지는 현상을 개선합니다.</p>
-<ul><li>**공간 궤적 비교**: 원본 항적(녹색 선/점)과 보간 항적(적색 선)을 동시에 도시하여 궤적을 직관적으로 확인.</li></ul>
-<ul><li>**시계열 차트**: 위도, 경도, 속도, 헤딩각의 시간에 따른 변화를 명확하게 플롯.</li></ul>
-<ul><li>**헤딩 평활화**: 급격한 요동(Yawing)을 억제하는 이동 평균 및 3차 스플라인(Cubic Spline) 필터 적용.</li></ul>
-<ul><li>**사이드카 연동**: `[파일명].nav.csv` 파일로 자동 보존되어 모자익 프로세서에 무결하게 전달.</li></ul>
-<hr>
-<h2>제8장. 정밀 GeoTIFF 모자익 제작</h2>
+<h2>제4장. 정밀 GeoTIFF 모자익 제작 (Backscatter Mosaic Builder)</h2>
 <p><strong>1. </strong> 상단 메뉴 `모자익` -&gt; `모자익 생성기`를 클릭합니다.</p>
-<p><strong>2. </strong> 참여할 소나 파일들을 체크 선택합니다.</p>
+<p><strong>2. </strong> 참여할 소나 파일(SSS 및 Norbit MBES XTF)들을 체크 선택합니다.</p>
 <p><strong>3. </strong> 실시간으로 계산되는 총 Swath Coverage(실제 조사 면적 및 트랙폭)를 확인합니다.</p>
 <p><strong>4. </strong> 출력 해상도(Cell Size: 0.1m, 0.25m, 0.5m 등)와 좌표계(WGS84 / UTM Zone)를 지정합니다.</p>
 <p><strong>5. </strong> `빌드 시작`을 누르면 실시간 진행률 표시와 함께 GeoTIFF 및 투명 마스크(Alpha)가 생성됩니다.</p>
-<p><strong>6. </strong> 완료 시 우측 지도 뷰에 모자익 래스터가 Leaflet 타일 형태로 자동 로드됩니다.</p>
+<p><strong>6. </strong> 완료 시 우측 지도 뷰에 백스캐터 모자익 래스터가 Leaflet 타일 형태로 자동 로드됩니다.</p>
 <hr>
-<h2>제9장. 문제 해결 및 FAQ</h2>
-<hr>
-<h2>제10장. 구글 닥스(Google Docs)에서 본 매뉴얼 활용 방법</h2>
+<h2>제5장. 구글 닥스(Google Docs)에서 본 매뉴얼 활용 방법</h2>
 <p>본 매뉴얼 파일(`USER_MANUAL.docx`)은 구글 닥스(Google Docs)와 100% 호환되도록 표준 OpenXML 규격으로 제작되었습니다.</p>
 <p><strong>1. </strong> 웹 브라우저를 열고 Google Drive(https://drive.google.com)에 로그인합니다.</p>
 <p><strong>2. </strong> 좌측 상단의 `[+ 새로 만들기]` -&gt; `[파일 업로드]`를 클릭하여 `USER_MANUAL.docx` 파일을 업로드합니다.</p>
