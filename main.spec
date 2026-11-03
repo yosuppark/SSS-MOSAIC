@@ -114,6 +114,12 @@ if os.path.isdir(_proc_dir):
             datas.append((os.path.join(_proc_dir, _fn), "processing"))
     print("[spec] bundled processing sources")
 
+# assets 폴더 동봉 (오프라인 지도 및 리소스)
+_assets_dir = os.path.join(HERE, "assets")
+if os.path.isdir(_assets_dir):
+    datas.append((_assets_dir, "assets"))
+    print("[spec] bundled assets directory")
+
 # 런타임 훅
 runtime_hooks = []
 _rt = os.path.join(HERE, "rthook_geo.py")

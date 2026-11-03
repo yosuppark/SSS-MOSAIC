@@ -50,6 +50,20 @@
 
 ---
 
+### 8. 완전 오프라인(Offline) 환경 100% 지원 (선박/해상 인터넷 차단 환경 완벽 대응)
+* **외부 네트워크 의존성 제로(0)**: 기존 외부 Leaflet CDN(`unpkg.com`) 의존성을 완전히 제거하고, 독립형 Leaflet 엔진(CSS, JS, 마커 Data-URI)을 로컬에 완벽 내장.
+* **해양 항법 다크 그리드 (Nautical Marine Grid)**: 인터넷이 전혀 없는 선박 현장에서도 세련된 다크 블루 해양 좌표 그리드 배경이 즉시 표출되어 시각적 명확성 제공.
+* **모든 지도 기능 100% 정상 작동**:
+  * 조사선 항적(Track Polylines)
+  * 소나 스와스폭(Swath Coverage Polygons)
+  * 실시간 핑 호버 위치 원형 마커
+  * 해저 타겟/이상체(Contact Markers & Tooltips)
+  * 백스캐터 GeoTIFF 모자익 오버레이
+* **온라인/오프라인 하이브리드 지원**: 인터넷 연결 시 OpenStreetMap(OSM) 타일이 자동 활성화되며, 우측 상단 레이어 컨트롤에서 개별 레이어 및 OSM 배경 지도를 자유롭게 온/오프 가능.
+
+
+---
+
 ## 📂 폴더 구조 (Project Architecture)
 
 ```

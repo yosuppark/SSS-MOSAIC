@@ -62,7 +62,28 @@ Norbit MBES(Multibeam Echosounder) 시스템(iWBMS, WINGHEAD 등)에서 export�
 
 ---
 
-## 제5장. 구글 닥스(Google Docs)에서 본 매뉴얼 활용 방법
+## 제5장. 완전 오프라인(Offline) 환경 해양 항적 및 모자익 뷰어
+
+해상 조사선이나 인터넷 접속이 불가능한 현장 환경에서도 프로그램의 모든 지도 및 항적 가시화 기능이 100% 정상 작동하도록 설계되었습니다.
+
+1. **외부 CDN 의존성 제로(Zero)**:
+   * 기존 외부 Leaflet CDN(`unpkg.com`) 의존성을 완전히 제거하고, 독립형 Leaflet 엔진(CSS, JS, 마커 아이콘)을 내부에 완벽 임베딩하였습니다.
+2. **해양 항법 다크 그리드 (Nautical Marine Grid)**:
+   * 인터넷이 연결되지 않은 경우, 자동으로 세련된 다크 블루 해양 좌표 그리드 배경이 활성화되어 측선과 스와스폭이 높은 명암 대비로 선명하게 표시됩니다.
+3. **모든 레이어 오프라인 완벽 표출**:
+   * 조사선 항적선 (Track Polylines)
+   * 음파 조사 영역 및 스와스폭 (Swath Coverage Polygons)
+   * 실시간 워터폴 연동 핑 위치 원형 마커 (Ping Highlight Marker)
+   * 타겟/이상체 마커 및 라벨 (Contact Markers & Labels)
+   * 지리참조 백스캐터 GeoTIFF 모자익 래스터 오버레이 (Mosaic Overlays)
+4. **온라인/오프라인 하이브리드 자동 연동**:
+   * 인터넷이 연결되면 OpenStreetMap(OSM) 배경 지도가 자동으로 오버레이됩니다.
+   * 우측 상단의 레이어 토글 컨트롤에서 '항적', '스와스폭', '이상체', '모자익', '온라인 지도(OSM)'를 클릭 한 번으로 자유롭게 온/오프할 수 있습니다.
+   * 좌측 하단에 실시간 지도 상태(오프라인 모드 / 온라인 지도 연결됨) 배지가 표시됩니다.
+
+---
+
+## 제6장. 구글 닥스(Google Docs)에서 본 매뉴얼 활용 방법
 
 본 매뉴얼 파일(`USER_MANUAL.docx`)은 구글 닥스(Google Docs)와 100% 호환되도록 표준 OpenXML 규격으로 제작되었습니다.
 

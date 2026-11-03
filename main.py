@@ -20,6 +20,9 @@ except ImportError:
 import os
 import sys
 
+# QtWebEngine 안정화 플래그 (Chromium 샌드박스 충돌 방지 및 단독 실행 보장)
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
+
 # PyInstaller 단일 파일 실행 시 임시 폴더 경로를 시스템 참조 경로에 강제 추가
 if getattr(sys, 'frozen', False):
     ext_dir = sys._MEIPASS
@@ -383,10 +386,11 @@ class MainWindow(QMainWindow):
         self._update_nav()
 
     # ================================================ 파일 열기 (복수)
-    def open_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "XTF 파일 선택 (복수 가능)", "",
-            "XTF Files (*.xtf);;All Files (*)")
+    def open_files(self, paths=None):
+        if paths is None:
+            paths, _ = QFileDialog.getOpenFileNames(
+                self, "XTF 파일 선택 (복수 가능)", "",
+                "XTF Files (*.xtf);;All Files (*)")
         if not paths:
             return
 
