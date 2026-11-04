@@ -39,7 +39,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QWidget, QSplitter,
     QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSlider, QMessageBox,
-    QDoubleSpinBox, QButtonGroup, QFrame,
+    QDoubleSpinBox, QButtonGroup, QFrame, QProgressDialog,
 )
 
 from xtf_loader import load_xtf
@@ -52,6 +52,8 @@ from processing.nav_interpolator import process_navigation, apply_interpolated_n
 from processing.nav_dialog import NavProcessDialog
 from processing.fishbone_dialog import NavHeadingTunerDialog
 from processing.motion_ripple_dialog import TowfishMotionRippleDialog
+from processing.sonar_converter import convert_sonar_to_xtf
+from processing.converter_dialog import SonarConverterDialog
 from processing.agc import apply_agc
 from bounds_utils import bounds_from_raster
 
@@ -208,6 +210,13 @@ class MainWindow(QMainWindow):
         act_open.setShortcut(QKeySequence("Ctrl+O"))
         act_open.triggered.connect(self.open_files)
         m_file.addAction(act_open)
+
+        act_convert = QAction("소나 파일 포맷 변환 (Humminbird / Lowrance ➔ XTF)...", self)
+        act_convert.setShortcut(QKeySequence("Ctrl+T"))
+        act_convert.setStatusTip("Humminbird 및 Lowrance 소나 기록 파일을 표준 2채널 XTF로 변환")
+        act_convert.triggered.connect(self._on_open_converter_dialog)
+        m_file.addAction(act_convert)
+        self.act_convert = act_convert
         
         m_file.addSeparator()
 
@@ -286,6 +295,14 @@ class MainWindow(QMainWindow):
         act_mos_del = QAction("모자이크 제거", self)
         act_mos_del.triggered.connect(self.remove_mosaic)
         m_mos.addAction(act_mos_del)
+
+        # ---- 메뉴: 도구 ----
+        m_tool = self.menuBar().addMenu("도구(&T)")
+        act_tool_convert = QAction("소나 파일 포맷 변환기 (Humminbird / Lowrance ➔ XTF)...", self)
+        act_tool_convert.setStatusTip("Humminbird 및 Lowrance 소나 기록 파일을 표준 2채널 XTF로 일괄 변환")
+        act_tool_convert.triggered.connect(self._on_open_converter_dialog)
+        m_tool.addAction(act_tool_convert)
+        self.act_tool_convert = act_tool_convert
 
         # ---- 좌: 지도 / 우: waterfall + 하단바 ----
         self.map = MapView()
@@ -389,8 +406,8 @@ class MainWindow(QMainWindow):
     def open_files(self, paths=None):
         if paths is None:
             paths, _ = QFileDialog.getOpenFileNames(
-                self, "XTF 파일 선택 (복수 가능)", "",
-                "XTF Files (*.xtf);;All Files (*)")
+                self, "소나 파일 선택 (XTF, Lowrance, Humminbird)", "",
+                "모든 지원 소나 파일 (*.xtf *.sl2 *.sl3 *.slg *.dat *.son);;XTF 소나 (*.xtf);;Lowrance 로그 (*.sl2 *.sl3 *.slg);;Humminbird 파일 (*.dat *.son);;모든 파일 (*)")
         if not paths:
             return
 
@@ -401,7 +418,50 @@ class MainWindow(QMainWindow):
         self.mosaic_kind = None
 
         errors = []
+        xtf_paths = []
+
+        # 1. 지원 포맷 분류: Lowrance / Humminbird 소나 파일 자동 변환
+        non_xtf = []
         for path in sorted(paths):
+            ext = os.path.splitext(path)[1].lower()
+            if ext in (".sl2", ".sl3", ".slg", ".dat", ".son"):
+                non_xtf.append(path)
+            else:
+                xtf_paths.append(path)
+
+        if non_xtf:
+            prog = QProgressDialog("소나 파일 포맷 변환 중 (XTF 생성)...", "취소", 0, len(non_xtf) * 100, self)
+            prog.setWindowTitle("소나 파일 변환")
+            prog.setWindowModality(Qt.WindowModal)
+            prog.setMinimumDuration(0)
+            prog.setValue(0)
+            prog.show()
+            QApplication.processEvents()
+
+            for i, src in enumerate(non_xtf):
+                if prog.wasCanceled():
+                    break
+                fname = os.path.basename(src)
+                dst = f"{os.path.splitext(src)[0]}.xtf"
+
+                prog.setLabelText(f"변환 중 ({i+1}/{len(non_xtf)}): {fname} ➔ {os.path.basename(dst)}")
+                QApplication.processEvents()
+
+                try:
+                    def _conv_cb(pct, msg, base=i * 100):
+                        prog.setValue(base + int(pct))
+                        prog.setLabelText(f"{fname}: {msg}")
+                        QApplication.processEvents()
+
+                    out_path = convert_sonar_to_xtf(src, dst, progress_callback=_conv_cb)
+                    xtf_paths.append(out_path)
+                except Exception as e:
+                    errors.append(f"{fname} 변환 오류: {e}")
+
+            prog.close()
+
+        # 2. XTF 파일 로드
+        for path in sorted(xtf_paths):
             try:
                 img, meta = load_xtf(path, agc=self.agc_on,
                                      agc_window=AGC_WINDOW)
@@ -656,6 +716,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "💡 Waterfall 화면에서 파도 리플 패턴이 나타난 구간을 마우스 좌클릭으로 드래그하여 지정하세요.", 8000
         )
+
+    # ================================================ 소나 포맷 변환기
+    def _on_open_converter_dialog(self):
+        """Humminbird / Lowrance 소나 파일 변환 대화상자 표시."""
+        dlg = SonarConverterDialog(self)
+        dlg.converted_files_ready.connect(self.open_files)
+        dlg.exec()
 
     def _on_roi_selected(self, r0: int, r1: int, c0: int, c1: int):
         """Waterfall에서 사용자가 마우스로 드래그한 ROI 영역 수신."""

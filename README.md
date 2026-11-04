@@ -50,6 +50,19 @@
 
 ---
 
+### 9. Humminbird & Lowrance 소나 포맷 변환 및 모자이킹 지원 (PINGMapper / PINGVerter 참조)
+* **다양한 소나 하드웨어 로그 완벽 지원**:
+  * **Lowrance 소나**: `.SL2` (144B 프레임), `.SL3` (168B 프레임), `.SLG` 바이너리 프레임 파싱. Navico Mercator 투영 좌표를 WGS84 위경도로 무손실 변환.
+  * **Humminbird 소나**: `.DAT` 메타데이터, `.SON` (`B002.SON`=Port, `B003.SON`=Starboard), `.IDX` 파일 자동 페어링 및 동기화. Humminbird 전용 좌표계 변환 수식 적용.
+* **직접 파일 열기 (`Ctrl+O`) 지원**:
+  * 파일 열기 대화상자에서 `.xtf`뿐만 아니라 `.sl2`, `.sl3`, `.slg`, `.dat`, `.son` 파일을 직접 선택 가능.
+  * 선택 시 표준 2-채널 XTF 파일로 자동 변환되어 워터폴 디스플레이, 바탐 추적, 방사보정, 리플 보정 및 GeoTIFF 모자이킹까지 즉시 사용 가능.
+* **소나 파일 포맷 변환기 GUI (`Ctrl+T` / 도구 메뉴)**:
+  * 다중 소나 파일 및 폴더 일괄 탐색 추가 (`+ 폴더 탐색 추가`).
+  * 소나 파일 형식, 파일 크기, 핑(Ping) 수, 유효성 신속 자동 검사(Probe).
+  * 동일 폴더 또는 사용자 지정 출력 폴더 선택 및 실시간 진행률/로그 창 제공.
+  * "변환 완료 후 메인 작업창에 자동 로드" 옵션을 통해 원클릭 모자이킹 워크플로우 완성.
+
 ### 8. 완전 오프라인(Offline) 환경 100% 지원 (선박/해상 인터넷 차단 환경 완벽 대응)
 * **외부 네트워크 의존성 제로(0)**: 기존 외부 Leaflet CDN(`unpkg.com`) 의존성을 완전히 제거하고, 독립형 Leaflet 엔진(CSS, JS, 마커 Data-URI)을 로컬에 완벽 내장.
 * **해양 항법 다크 그리드 (Nautical Marine Grid)**: 인터넷이 전혀 없는 선박 현장에서도 세련된 다크 블루 해양 좌표 그리드 배경이 즉시 표출되어 시각적 명확성 제공.
@@ -89,7 +102,9 @@ c:\pywork\scan6\
 │   ├── nav_dialog.py                # 항적 보간 설정 UI
 │   ├── nav_interpolator.py          # 고정밀 항적 보간 및 헤딩 평활화 엔진
 │   ├── nav_io.py                    # 항적 (.nav.csv) 사이드카 입출력
-│   └── sl2_to_xtf.py                # Lowrance SL2 -> XTF 변환기
+│   ├── sl2_to_xtf.py                # Lowrance SL2 -> XTF 레거시 변환기
+│   ├── sonar_converter.py           # Humminbird / Lowrance 범용 소나 파서 & XTF 변환 코어
+│   └── converter_dialog.py          # 소나 포맷 변환기 GUI 다이얼로그 (배치 변환/로그)
 └── dist/
     └── XTF_Processor_V1.0/          # 배포용 독립 실행 폴더 (XTF_Processor_V1.0.exe 포함)
 ```
@@ -109,6 +124,22 @@ Python 및 GIS 환경이 설치되어 있지 않은 일반 PC에서도 즉시 �
 pip install -r requirements.lock.txt
 python main.py
 ```
+
+---
+
+## 🛠️ Humminbird / Lowrance 소나 파일 변환 및 모자이킹 워크플로우
+
+### 방법 A. 파일 열기(`Ctrl+O`)로 원클릭 즉시 열기 및 모자이킹
+1. 상단 메뉴 `파일(F)` -> `열기` (`Ctrl+O`) 클릭
+2. 파일 형식 필터에서 `모든 지원 소나 파일 (*.xtf *.sl2 *.sl3 *.slg *.dat *.son)` 선택 후 원하는 소나 파일 선택
+3. 프로그램이 자동으로 XTF로 변환 후 워터폴 및 지도 화면에 즉시 로드
+4. `Ctrl+M`을 눌러 고해상도 백스캐터 GeoTIFF 모자익 생성!
+
+### 방법 B. 소나 파일 변환기(`Ctrl+T`)를 통한 일괄 배치 변환
+1. 상단 메뉴 `도구(T)` -> `소나 파일 포맷 변환기...` (또는 `Ctrl+T`) 실행
+2. `[➕ 파일 추가...]` 또는 `[📁 폴더 탐색 추가...]`를 눌러 Lowrance(`.sl2`, `.sl3`, `.slg`) 또는 Humminbird(`.dat`, `.son`) 파일 추가
+3. 출력 폴더 및 `[x] 변환 완료 후 메인 작업창에 자동 로드` 옵션 확인
+4. `[🚀 변환 시작]` 버튼 클릭 ➔ 변환 완료 후 작업창에 자동 로드 및 모자이킹 준비 완료!
 
 ---
 

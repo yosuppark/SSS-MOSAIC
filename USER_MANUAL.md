@@ -62,7 +62,7 @@ Norbit MBES(Multibeam Echosounder) 시스템(iWBMS, WINGHEAD 등)에서 export�
 
 ---
 
-## 제5장. 완전 오프라인(Offline) 환경 해양 항적 및 모자익 뷰어
+## 제6장. 완전 오프라인(Offline) 환경 해양 항적 및 모자익 뷰어
 
 해상 조사선이나 인터넷 접속이 불가능한 현장 환경에서도 프로그램의 모든 지도 및 항적 가시화 기능이 100% 정상 작동하도록 설계되었습니다.
 
