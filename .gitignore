@@ -11,3 +11,6 @@ exported_mosaics/
 *.log
 contacts/*.png
 nuitka-crash-report.xml
+build_env/
+venv/
+*.tmp
