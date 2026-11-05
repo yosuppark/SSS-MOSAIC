@@ -39,7 +39,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QWidget, QSplitter,
     QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSlider, QMessageBox,
-    QDoubleSpinBox, QButtonGroup, QFrame, QProgressDialog,
+    QDoubleSpinBox, QButtonGroup, QFrame, QProgressDialog, QMenu,
 )
 
 from xtf_loader import load_xtf
@@ -204,22 +204,27 @@ class MainWindow(QMainWindow):
 
     # ================================================ UI
     def _build_ui(self):
+        # ---- 메뉴바 영구 보존 및 부모 설정 (Shiboken C++ 소멸 방지) ----
+        mb = self.menuBar()
+
         # ---- 메뉴: 파일 ----
-        m_file = self.menuBar().addMenu("파일(&F)")
+        self.m_file = QMenu("파일(&F)", mb)
+        mb.addMenu(self.m_file)
+
         act_open = QAction("열기(복수 선택)...", self)
         act_open.setShortcut(QKeySequence("Ctrl+O"))
         act_open.triggered.connect(lambda checked=False: self.open_files())
-        m_file.addAction(act_open)
+        self.m_file.addAction(act_open)
         self.act_open = act_open
 
         act_convert = QAction("소나 파일 포맷 변환 (Humminbird / Lowrance ➔ XTF)...", self)
         act_convert.setShortcut(QKeySequence("Ctrl+T"))
         act_convert.setStatusTip("Humminbird 및 Lowrance 소나 기록 파일을 표준 2채널 XTF로 변환")
         act_convert.triggered.connect(self._on_open_converter_dialog)
-        m_file.addAction(act_convert)
+        self.m_file.addAction(act_convert)
         self.act_convert = act_convert
         
-        m_file.addSeparator()
+        self.m_file.addSeparator()
 
         act_exit = QAction("종료(&X)", self)
         act_exit.setShortcut(QKeySequence.Quit)      # Windows: Ctrl+Q
@@ -227,82 +232,88 @@ class MainWindow(QMainWindow):
                                QKeySequence("Alt+F4")])
         act_exit.setStatusTip("프로그램을 종료합니다")
         act_exit.triggered.connect(self.close)
-        m_file.addAction(act_exit)
+        self.m_file.addAction(act_exit)
         self.act_exit = act_exit
 
         # ---- 메뉴: 처리 ----
-        m_view = self.menuBar().addMenu("처리(&P)")
+        self.m_view = QMenu("처리(&P)", mb)
+        mb.addMenu(self.m_view)
+
         self.act_agc = QAction("방사보정 AGC 적용 (Angle Varied Gain)", self, checkable=True)
         self.act_agc.setStatusTip("해저면 First Bottom 기준 각도별 이득 보정(AVG/TVG)을 적용하여 직하방 과포화 억제 및 원거리 감쇄를 보상합니다.")
         self.act_agc.toggled.connect(self._on_agc_toggled)
-        m_view.addAction(self.act_agc)
+        self.m_view.addAction(self.act_agc)
 
         self.act_swap_ch = QAction("좌우 채널 반전 (Port ↔ Starboard Swap)", self, checkable=True)
         self.act_swap_ch.setShortcut(QKeySequence("Ctrl+Shift+X"))
         self.act_swap_ch.setStatusTip("소나 Port와 Starboard 채널 순서를 상호 반대로 교환")
         self.act_swap_ch.toggled.connect(self._on_swap_channels_toggled)
-        m_view.addAction(self.act_swap_ch)
+        self.m_view.addAction(self.act_swap_ch)
 
         act_fishbone = QAction("생선 가시 항법/헤딩 튜너 (Fishbone Inspection)...", self)
         act_fishbone.setShortcut(QKeySequence("Ctrl+H"))
         act_fishbone.setStatusTip("생선 가시 형태 항적/헤딩 시각화 및 부드러운 변위 보간 실시간 튜닝")
         act_fishbone.triggered.connect(self._on_open_fishbone_tuner)
-        m_view.addAction(act_fishbone)
+        self.m_view.addAction(act_fishbone)
         self.act_fishbone = act_fishbone
 
         act_nav = QAction("항법 일괄 보정 및 핑 보간 (Navigation Processing)...", self)
         act_nav.setShortcut(QKeySequence("Ctrl+N"))
         act_nav.setStatusTip("GPS 스파이크 제거, 기준 위치 스무딩 및 매 핑별 위치/헤딩 보간")
         act_nav.triggered.connect(self._on_process_navigation)
-        m_view.addAction(act_nav)
+        self.m_view.addAction(act_nav)
         self.act_nav = act_nav
 
-        m_view.addSeparator()
+        self.m_view.addSeparator()
         self.act_bt_edit = QAction("해저면 추적 및 바탐 편집 (Bottom Tracking / Edit)...", self, checkable=True)
         self.act_bt_edit.setShortcut(QKeySequence("Ctrl+B"))
         self.act_bt_edit.setStatusTip("시드 기반 First Bottom 자동 추적 및 구간 수동 보정")
         self.act_bt_edit.toggled.connect(self._toggle_bt_edit)
-        m_view.addAction(self.act_bt_edit)
+        self.m_view.addAction(self.act_bt_edit)
 
         act_ripple = QAction("토우피쉬 모션 리플 보정 (Motion Ripple Correction)...", self)
         act_ripple.setShortcut(QKeySequence("Ctrl+R"))
         act_ripple.setStatusTip("파도에 의한 롤링/피칭 리플 해석 및 줄무늬 아티팩트 보정")
         act_ripple.triggered.connect(self._on_open_motion_ripple)
-        m_view.addAction(act_ripple)
+        self.m_view.addAction(act_ripple)
         self.act_ripple = act_ripple
 
         # ---- 메뉴: 모자이크 ----
-        m_mos = self.menuBar().addMenu("모자이크(&M)")
+        self.m_mos = QMenu("모자이크(&M)", mb)
+        mb.addMenu(self.m_mos)
+
         act_build = QAction("모자이크 생성 (알파 포함)...", self)
         act_build.setShortcut(QKeySequence("Ctrl+M"))
         act_build.triggered.connect(self.build_mosaic)
-        m_mos.addAction(act_build)
+        self.m_mos.addAction(act_build)
 
         act_load = QAction("모자이크 GeoTIFF 열기...", self)
         act_load.triggered.connect(self.load_mosaic_file)
-        m_mos.addAction(act_load)
+        self.m_mos.addAction(act_load)
 
         act_alpha = QAction("기존 GeoTIFF에 알파 추가...", self)
         act_alpha.triggered.connect(self.add_alpha_file)
-        m_mos.addAction(act_alpha)
+        self.m_mos.addAction(act_alpha)
 
-        m_mos.addSeparator()
+        self.m_mos.addSeparator()
         self.act_mos_show = QAction("지도에 모자이크 표시", self, checkable=True)
         self.act_mos_show.setShortcut(QKeySequence("Ctrl+Shift+M"))
         self.act_mos_show.setChecked(True)
         self.act_mos_show.toggled.connect(self._on_mosaic_visible)
-        m_mos.addAction(self.act_mos_show)
+        self.m_mos.addAction(self.act_mos_show)
 
         act_mos_del = QAction("모자이크 제거", self)
         act_mos_del.triggered.connect(self.remove_mosaic)
-        m_mos.addAction(act_mos_del)
+        self.m_mos.addAction(act_mos_del)
 
         # ---- 메뉴: 도구 ----
-        m_tool = self.menuBar().addMenu("도구(&T)")
+        self.m_tool = QMenu("도구(&T)", mb)
+        mb.addMenu(self.m_tool)
+
         act_tool_convert = QAction("소나 파일 포맷 변환기 (Humminbird / Lowrance ➔ XTF)...", self)
         act_tool_convert.setStatusTip("Humminbird 및 Lowrance 소나 기록 파일을 표준 2채널 XTF로 일괄 변환")
         act_tool_convert.triggered.connect(self._on_open_converter_dialog)
-        m_tool.addAction(act_tool_convert)
+        self.m_tool.addAction(act_tool_convert)
         self.act_tool_convert = act_tool_convert
 
         # ---- 상단 메인 툴바 (빠른 실행 도구) ----
@@ -373,8 +384,24 @@ class MainWindow(QMainWindow):
         self.btn_next.setShortcut(QKeySequence(Qt.Key_PageDown))
         self.btn_prev.clicked.connect(lambda: self._switch_file(-1))
         self.btn_next.clicked.connect(lambda: self._switch_file(+1))
-        self.lbl_file = QLabel("파일 없음")
-        self.lbl_file.setAlignment(Qt.AlignCenter)
+        self.lbl_file = QPushButton("📂 소나 파일 열기 (현재: 파일 없음 - 클릭하여 파일 선택)")
+        self.lbl_file.setToolTip("클릭하여 XTF, Lowrance(SL2/SL3), Humminbird(DAT/SON) 소나 파일을 엽니다 (단축키: Ctrl+O)")
+        self.lbl_file.setStyleSheet("""
+            QPushButton {
+                background-color: #21262d;
+                color: #58a6ff;
+                border: 1px solid #388bfd;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #1f6feb;
+                color: #ffffff;
+            }
+        """)
+        self.lbl_file.clicked.connect(lambda checked=False: self.open_files())
 
         # 좌우 채널 반전 버튼
         self.btn_swap_ch = QPushButton("좌우 반전 (P↔S)")
@@ -457,9 +484,19 @@ class MainWindow(QMainWindow):
     def open_files(self, paths=None):
         # QAction.triggered 신호에서 bool(False)이 전달되거나 인자가 없는 경우 파일 선택 대화상자 활성화
         if paths is None or isinstance(paths, bool) or not paths:
-            paths, _ = QFileDialog.getOpenFileNames(
-                self, "소나 파일 선택 (XTF, Lowrance, Humminbird)", "",
-                "모든 지원 소나 파일 (*.xtf *.sl2 *.sl3 *.slg *.dat *.son);;XTF 소나 (*.xtf);;Lowrance 로그 (*.sl2 *.sl3 *.slg);;Humminbird 파일 (*.dat *.son);;모든 파일 (*)")
+            try:
+                # 1차 시도: Qt 표준 내장 다이얼로그 (Chromium / QtWebEngine 환경에서 네이티브 COM 행/숨김 방지)
+                paths, _ = QFileDialog.getOpenFileNames(
+                    self, "소나 파일 선택 (XTF, Lowrance, Humminbird)", "",
+                    "모든 지원 소나 파일 (*.xtf *.sl2 *.sl3 *.slg *.dat *.son);;XTF 소나 (*.xtf);;Lowrance 로그 (*.sl2 *.sl3 *.slg);;Humminbird 파일 (*.dat *.son);;모든 파일 (*)",
+                    options=QFileDialog.Option.DontUseNativeDialog
+                )
+            except Exception:
+                # 2차 시도: 기본 다이얼로그 폴백
+                paths, _ = QFileDialog.getOpenFileNames(
+                    self, "소나 파일 선택 (XTF, Lowrance, Humminbird)", "",
+                    "모든 지원 소나 파일 (*.xtf *.sl2 *.sl3 *.slg *.dat *.son);;XTF 소나 (*.xtf);;Lowrance 로그 (*.sl2 *.sl3 *.slg);;Humminbird 파일 (*.dat *.son);;모든 파일 (*)"
+                )
         if not paths or isinstance(paths, bool):
             return
 
@@ -595,10 +632,10 @@ class MainWindow(QMainWindow):
         self.btn_next.setEnabled(n > 1)
         if has:
             name = os.path.basename(self.files[self.cur_idx]["path"])
-            self.lbl_file.setText(f"[{self.cur_idx + 1}/{n}]  {name}")
+            self.lbl_file.setText(f"📂 [{self.cur_idx + 1}/{n}]  {name}  (클릭 시 새 파일 열기)")
             self.setWindowTitle(f"XTF Processor V1.0 — {name}")
         else:
-            self.lbl_file.setText("파일 없음")
+            self.lbl_file.setText("📂 소나 파일 열기 (현재: 파일 없음 - 클릭하여 파일 선택)")
             self.setWindowTitle("XTF Processor V1.0")
 
     # ================================================ 표시 (밝기/대비)
