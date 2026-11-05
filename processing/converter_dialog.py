@@ -288,7 +288,7 @@ class SonarConverterDialog(QDialog):
     # ==========================================================================
     # 파일 목록 관리
     # ==========================================================================
-    def _on_add_files_clicked(self):
+    def _on_add_files_clicked(self, checked=False):
         files, _ = QFileDialog.getOpenFileNames(
             self, "변환할 소나 파일 선택 (복수 선택 가능)", "",
             "지원 소나 파일 (*.sl2 *.sl3 *.slg *.dat *.son);;Lowrance 로그 (*.sl2 *.sl3 *.slg);;Humminbird 파일 (*.dat *.son);;모든 파일 (*)"
@@ -296,7 +296,7 @@ class SonarConverterDialog(QDialog):
         if files:
             self.add_files(files)
 
-    def _on_add_dir_clicked(self):
+    def _on_add_dir_clicked(self, checked=False):
         folder = QFileDialog.getExistingDirectory(self, "소나 파일이 포함된 폴더 선택")
         if not folder:
             return

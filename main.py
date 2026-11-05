@@ -208,8 +208,9 @@ class MainWindow(QMainWindow):
         m_file = self.menuBar().addMenu("파일(&F)")
         act_open = QAction("열기(복수 선택)...", self)
         act_open.setShortcut(QKeySequence("Ctrl+O"))
-        act_open.triggered.connect(self.open_files)
+        act_open.triggered.connect(lambda checked=False: self.open_files())
         m_file.addAction(act_open)
+        self.act_open = act_open
 
         act_convert = QAction("소나 파일 포맷 변환 (Humminbird / Lowrance ➔ XTF)...", self)
         act_convert.setShortcut(QKeySequence("Ctrl+T"))
@@ -303,6 +304,56 @@ class MainWindow(QMainWindow):
         act_tool_convert.triggered.connect(self._on_open_converter_dialog)
         m_tool.addAction(act_tool_convert)
         self.act_tool_convert = act_tool_convert
+
+        # ---- 상단 메인 툴바 (빠른 실행 도구) ----
+        tb = self.addToolBar("메인 도구")
+        tb.setMovable(False)
+        tb.setStyleSheet("""
+            QToolBar {
+                spacing: 8px;
+                padding: 4px 10px;
+                background-color: #1f242d;
+                border-bottom: 1px solid #30363d;
+            }
+            QPushButton {
+                padding: 6px 14px;
+                font-weight: bold;
+                font-size: 12px;
+                border-radius: 4px;
+            }
+        """)
+
+        btn_open = QPushButton("📂 소나 파일 열기 (Ctrl+O)")
+        btn_open.setStyleSheet("background-color: #238636; color: white;")
+        btn_open.setToolTip("XTF, Lowrance(SL2/SL3/SLG), Humminbird(DAT/SON) 소나 파일을 열고 모자이킹 준비")
+        btn_open.clicked.connect(lambda checked=False: self.open_files())
+        tb.addWidget(btn_open)
+
+        btn_conv = QPushButton("🔄 소나 포맷 변환기 (Ctrl+T)")
+        btn_conv.setStyleSheet("background-color: #1f6feb; color: white;")
+        btn_conv.setToolTip("Humminbird 및 Lowrance 소나 기록 파일을 표준 2채널 XTF로 일괄 변환")
+        btn_conv.clicked.connect(self._on_open_converter_dialog)
+        tb.addWidget(btn_conv)
+
+        tb.addSeparator()
+
+        btn_mos = QPushButton("🗺️ 모자이크 생성 (Ctrl+M)")
+        btn_mos.setStyleSheet("background-color: #30363d; color: #f0f6fc;")
+        btn_mos.setToolTip("선택된 소나 라인들로부터 지리참조 GeoTIFF 모자익을 생성합니다.")
+        btn_mos.clicked.connect(self.build_mosaic)
+        tb.addWidget(btn_mos)
+
+        btn_rip = QPushButton("🌊 모션 리플 보정 (Ctrl+R)")
+        btn_rip.setStyleSheet("background-color: #30363d; color: #f0f6fc;")
+        btn_rip.setToolTip("토우피쉬 롤링/피칭 리플 해석 및 보정 다이얼로그를 엽니다.")
+        btn_rip.clicked.connect(self._on_open_motion_ripple)
+        tb.addWidget(btn_rip)
+
+        btn_fish = QPushButton("🐟 Fishbone 튜너 (Ctrl+H)")
+        btn_fish.setStyleSheet("background-color: #30363d; color: #f0f6fc;")
+        btn_fish.setToolTip("생선 가시 항적/헤딩 보간 실시간 튜너를 엽니다.")
+        btn_fish.clicked.connect(self._on_open_fishbone_tuner)
+        tb.addWidget(btn_fish)
 
         # ---- 좌: 지도 / 우: waterfall + 하단바 ----
         self.map = MapView()
@@ -404,11 +455,12 @@ class MainWindow(QMainWindow):
 
     # ================================================ 파일 열기 (복수)
     def open_files(self, paths=None):
-        if paths is None:
+        # QAction.triggered 신호에서 bool(False)이 전달되거나 인자가 없는 경우 파일 선택 대화상자 활성화
+        if paths is None or isinstance(paths, bool) or not paths:
             paths, _ = QFileDialog.getOpenFileNames(
                 self, "소나 파일 선택 (XTF, Lowrance, Humminbird)", "",
                 "모든 지원 소나 파일 (*.xtf *.sl2 *.sl3 *.slg *.dat *.son);;XTF 소나 (*.xtf);;Lowrance 로그 (*.sl2 *.sl3 *.slg);;Humminbird 파일 (*.dat *.son);;모든 파일 (*)")
-        if not paths:
+        if not paths or isinstance(paths, bool):
             return
 
         self.files = []
@@ -1139,9 +1191,23 @@ class MainWindow(QMainWindow):
         if paths:
             return paths
         sel, _ = QFileDialog.getOpenFileNames(
-            self, "모자이크에 사용할 XTF 선택", "",
-            "XTF Files (*.xtf);;All Files (*)")
-        return sorted(sel) if sel else []
+            self, "모자이크에 사용할 소나 파일 선택", "",
+            "모든 지원 소나 파일 (*.xtf *.sl2 *.sl3 *.slg *.dat *.son);;XTF 소나 (*.xtf);;Lowrance 로그 (*.sl2 *.sl3 *.slg);;Humminbird 파일 (*.dat *.son);;모든 파일 (*)")
+        if not sel:
+            return []
+        final_list = []
+        for s in sel:
+            ext = os.path.splitext(s)[1].lower()
+            if ext in (".sl2", ".sl3", ".slg", ".dat", ".son"):
+                dst = f"{os.path.splitext(s)[0]}.xtf"
+                try:
+                    converted = convert_sonar_to_xtf(s, dst)
+                    final_list.append(converted)
+                except Exception as e:
+                    print(f"변환 실패 ({s}): {e}")
+            else:
+                final_list.append(s)
+        return sorted(final_list)
 
     def _default_params(self, paths):
         name = "mosaic"
